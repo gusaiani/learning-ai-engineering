@@ -8,21 +8,21 @@ A project-based course to go from zero to $200k+ AI Engineer, working remotely f
 
 ## Roadmap
 
-| # | Module | Key Skill | Project |
-|---|--------|-----------|---------|
-| 01 | [LLM API Fundamentals](./01-llm-api-fundamentals/) | First real API calls, system prompts, structured outputs | CLI chat app |
-| 02 | [Prompt Engineering](./02-prompt-engineering/) | Chain-of-thought, few-shot, formatting, reliability | Prompt testing harness |
-| 03 | [Embeddings & Semantic Search](./03-embeddings-semantic-search/) | Vectors, cosine similarity, pgvector | Semantic search over docs |
-| 04 | [RAG — Retrieval Augmented Generation](./04-rag/) | Chunking, retrieval, reranking | RAG Q&A over a PDF corpus |
-| 05 | [AI Agents & Tool Use](./05-agents-tool-use/) | Function calling, tool loops, ReAct | Research agent |
-| 06 | [Evals — Measuring LLM Quality](./06-evals/) | LLM-as-judge, regression testing, benchmarks | Eval suite for your RAG |
-| 07 | [Streaming & Production Patterns](./07-streaming-production/) | Streaming, async, error handling, caching | Production-ready API |
-| 08 | [Fine-tuning](./08-fine-tuning/) | LoRA, QLoRA, datasets, PEFT | Fine-tune a model on custom data |
-| 09 | [Multi-agent Systems](./09-multi-agent/) | Orchestration, parallelism, handoffs | Multi-agent research pipeline |
-| 10 | [Observability & LLMOps](./10-llmops/) | Tracing, cost tracking, latency, monitoring | Instrumented production app |
-| 11 | [Multimodal — Vision & Audio](./11-multimodal/) | Image inputs, audio transcription, OCR | Document intelligence app |
-| 12 | [System Design for AI](./12-system-design/) | Architecture, trade-offs, scalability | Design doc for a real system |
-| 13 | [Capstone](./13-capstone/) | Everything | Ship a complete AI product |
+| # | Module | Key Skill | Project | Status |
+|---|--------|-----------|---------|--------|
+| 01 | [LLM API Fundamentals](./01-llm-api-fundamentals/) | First real API calls, system prompts, structured outputs | CLI chat app | ✅ |
+| 02 | [Prompt Engineering](./02-prompt-engineering/) | Chain-of-thought, few-shot, formatting, reliability | Prompt testing harness | |
+| 03 | [Embeddings & Semantic Search](./03-embeddings-semantic-search/) | Vectors, cosine similarity, pgvector | Semantic search over docs | |
+| 04 | [RAG — Retrieval Augmented Generation](./04-rag/) | Chunking, retrieval, reranking | RAG Q&A over a PDF corpus | |
+| 05 | [AI Agents & Tool Use](./05-agents-tool-use/) | Function calling, tool loops, ReAct | Research agent | |
+| 06 | [Evals — Measuring LLM Quality](./06-evals/) | LLM-as-judge, regression testing, benchmarks | Eval suite for your RAG | |
+| 07 | [Streaming & Production Patterns](./07-streaming-production/) | Streaming, async, error handling, caching | Production-ready API | |
+| 08 | [Fine-tuning](./08-fine-tuning/) | LoRA, QLoRA, datasets, PEFT | Fine-tune a model on custom data | |
+| 09 | [Multi-agent Systems](./09-multi-agent/) | Orchestration, parallelism, handoffs | Multi-agent research pipeline | |
+| 10 | [Observability & LLMOps](./10-llmops/) | Tracing, cost tracking, latency, monitoring | Instrumented production app | |
+| 11 | [Multimodal — Vision & Audio](./11-multimodal/) | Image inputs, audio transcription, OCR | Document intelligence app | |
+| 12 | [System Design for AI](./12-system-design/) | Architecture, trade-offs, scalability | Design doc for a real system | |
+| 13 | [Capstone](./13-capstone/) | Everything | Ship a complete AI product | |
 
 ---
 
@@ -79,20 +79,3 @@ After Module 6, you are already hirable for a mid-level role. After Module 10, s
 
 ---
 
-## Progress tracker
-
-| Module | Started | Shipped | Notes |
-|--------|---------|---------|-------|
-| 01 | ✅ | ✅ | CLI chat app — Anthropic SDK, rich UI, save/load, /cost |
-| 02 | | | |
-| 03 | | | |
-| 04 | | | |
-| 05 | | | |
-| 06 | | | |
-| 07 | | | |
-| 08 | | | |
-| 09 | | | |
-| 10 | | | |
-| 11 | | | |
-| 12 | | | |
-| 13 | | | |
