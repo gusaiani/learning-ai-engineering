@@ -83,7 +83,7 @@ After Module 6, you are already hirable for a mid-level role. After Module 10, s
 
 | Module | Started | Shipped | Notes |
 |--------|---------|---------|-------|
-| 01 | | | |
+| 01 | ✅ | ✅ | CLI chat app — Anthropic SDK, rich UI, save/load, /cost |
 | 02 | | | |
 | 03 | | | |
 | 04 | | | |

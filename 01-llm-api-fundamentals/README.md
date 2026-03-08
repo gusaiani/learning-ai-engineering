@@ -6,6 +6,21 @@
 
 ---
 
+## Setup & running
+
+```bash
+# Install dependencies
+pip install anthropic python-dotenv rich
+
+# Add your API key
+echo "ANTHROPIC_API_KEY=your_key_here" > .env
+
+# Run
+python chat.py
+```
+
+---
+
 ## What you'll learn
 
 - How the messages API works (roles, turns, context window)
