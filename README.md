@@ -11,7 +11,7 @@ A project-based course to go from zero to $200k+ AI Engineer, working remotely f
 | # | Module | Key Skill | Project | Status |
 |---|--------|-----------|---------|--------|
 | 01 | [LLM API Fundamentals](./01-llm-api-fundamentals/) | First real API calls, system prompts, structured outputs | CLI chat app | ✅ |
-| 02 | [Prompt Engineering](./02-prompt-engineering/) | Chain-of-thought, few-shot, formatting, reliability | Prompt testing harness | |
+| 02 | [Prompt Engineering](./02-prompt-engineering/) | Chain-of-thought, few-shot, formatting, reliability | Prompt testing harness | 🔨 |
 | 03 | [Embeddings & Semantic Search](./03-embeddings-semantic-search/) | Vectors, cosine similarity, pgvector | Semantic search over docs | |
 | 04 | [RAG — Retrieval Augmented Generation](./04-rag/) | Chunking, retrieval, reranking | RAG Q&A over a PDF corpus | |
 | 05 | [AI Agents & Tool Use](./05-agents-tool-use/) | Function calling, tool loops, ReAct | Research agent | |
