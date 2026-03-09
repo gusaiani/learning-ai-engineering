@@ -1,0 +1,21 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data / outputs
+*.json
+!**/tests.json
+*.csv
+
+# OS
+.DS_Store
