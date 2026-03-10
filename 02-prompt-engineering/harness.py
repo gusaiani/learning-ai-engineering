@@ -1,23 +1,33 @@
 import json
-from anthropic import Anthropic
+from pathlib import Path
+from openai import OpenAI
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.table import Table
 
-load_dotenv()
-client = Anthropic()
-MODEL = "claude-haiku-4-5-20251001"  # fast and cheap for testing
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+client = OpenAI()
+console = Console()
+model = "gpt-4o-mini"  # fast and cheap for testing
 
 
 def run_prompt(system: str, user: str) -> str:
     """Call the API with a system prompt and user message, return text."""
-    # TODO: implement
-    pass
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=1024,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
 
+    return response.choices[0].message.content
 
 def score(predicted: str, expected: str) -> bool:
     """Return True if predicted matches expected (case-insensitive strip)."""
-    # TODO: implement
-    pass
-
+    return predicted.strip().lower() == expected.strip().lower()
 
 def run_harness(test_cases: list[dict], variants: dict[str, str]) -> None:
     """
@@ -26,10 +36,34 @@ def run_harness(test_cases: list[dict], variants: dict[str, str]) -> None:
     test_cases: [{"input": "...", "expected": "..."}]
     variants:   {"variant_name": "system_prompt_string"}
     """
-    # TODO: implement
-    # Hint: collect results in a dict[variant_name][i] = {"output": ..., "pass": bool}
-    # Then use rich.table.Table to print
-    pass
+    results = {name: [] for name in variants}
+    for name, system in variants.items():
+        for case in test_cases:
+            output = run_prompt(system, case["input"])
+            passed = score(output, case["expected"])
+            results[name].append({"output": output, "pass": passed})
+
+    table = Table()
+    table.add_column("Input")
+    for name in variants:
+        table.add_column(name)
+
+    for i, case in enumerate(test_cases):
+        row = [case["input"]]
+        for name in variants:
+            r = results[name][i]
+            cell = "✅" if r["pass"] else f"❌ {r['output']}"
+            row.append(cell)
+        table.add_row(*row)
+
+    accuracy_row = ["Accuracy"]
+    for name in variants:
+        passed = sum(r["pass"] for r in results[name])
+        total = len(results[name])
+        accuracy_row.append(f"{passed}/{total}")
+    table.add_row(*accuracy_row)
+
+    console.print(table)
 
 
 if __name__ == "__main__":
@@ -51,7 +85,9 @@ Examples:
 Text: "Amazing quality!" → positive
 Text: "Does the job." → neutral
 Text: "Total waste of money." → negative""",
-        # TODO: add a third variant using chain-of-thought
+        "cot": """Classify the sentiment of the text. Reply with exactly one word: positive, neutral, or negative.
+
+Think step by step before answering. First identify the emotional tone, then give your final answer.""",
     }
 
     run_harness(test_cases, variants)

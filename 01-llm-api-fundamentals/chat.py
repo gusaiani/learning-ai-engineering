@@ -1,37 +1,40 @@
 import json
+from pathlib import Path
 from datetime import datetime
-from anthropic import Anthropic
+from openai import OpenAI
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.prompt import Prompt
 
-load_dotenv()
+load_dotenv(Path(__file__).parent.parent / ".env")
 
-client = Anthropic()
+client = OpenAI()
 console = Console()
 
 
 def chat():
     messages = []
     system = "You are a helpful assistant."
-    model = "claude-sonnet-4-6"
+    model = "gpt-4o"
     json_mode = False
     total_input_tokens = 0
     total_output_tokens = 0
     context_tokens = 0  # input tokens from the most recent call = current context size
 
     context_limits = {
-        "claude-opus-4-6":          200_000,
-        "claude-sonnet-4-6":        200_000,
-        "claude-haiku-4-5-20251001": 200_000,
+        "gpt-4o":       128_000,
+        "gpt-4o-mini":  128_000,
+        "gpt-4-turbo":  128_000,
+        "gpt-3.5-turbo": 16_385,
     }
 
     # Pricing per 1M tokens (input, output) in USD
     pricing = {
-        "claude-opus-4-6":           (15.00, 75.00),
-        "claude-sonnet-4-6":          (3.00, 15.00),
-        "claude-haiku-4-5-20251001":  (0.80,  4.00),
+        "gpt-4o":        (2.50,  10.00),
+        "gpt-4o-mini":   (0.15,   0.60),
+        "gpt-4-turbo":  (10.00,  30.00),
+        "gpt-3.5-turbo": (0.50,   1.50),
     }
 
     console.print(f"[bold green]Chat started.[/bold green] Model: [cyan]{model}[/cyan]")
@@ -73,7 +76,7 @@ def chat():
                 console.print(f"[dim]Tokens used — Input: [cyan]{total_input_tokens}[/cyan], Output: [cyan]{total_output_tokens}[/cyan][/dim]")
                 continue
             elif cmd == "/context":
-                limit = context_limits.get(model, 200_000)
+                limit = context_limits.get(model, 128_000)
                 pct = (context_tokens / limit) * 100 if context_tokens else 0
                 console.print(f"[dim]Context: [cyan]{context_tokens:,}[/cyan] / [cyan]{limit:,}[/cyan] tokens ([yellow]{pct:.1f}%[/yellow] full)[/dim]")
                 continue
@@ -127,20 +130,19 @@ def chat():
         if json_mode:
             active_system += " Always respond in valid JSON."
 
-        response = client.messages.create(
+        response = client.chat.completions.create(
             model=model,
             max_tokens=1024,
-            system=active_system,
-            messages=messages,
+            messages=[{"role": "system", "content": active_system}] + messages,
         )
-        text = response.content[0].text
+        text = response.choices[0].message.content
         messages.append({"role": "assistant", "content": text})
         console.print("\n[bold green]Assistant:[/bold green]")
         console.print(Markdown(text))
         console.print()
-        context_tokens = response.usage.input_tokens
-        total_input_tokens += response.usage.input_tokens
-        total_output_tokens += response.usage.output_tokens
+        context_tokens = response.usage.prompt_tokens
+        total_input_tokens += response.usage.prompt_tokens
+        total_output_tokens += response.usage.completion_tokens
         console.print(f"[dim]Tokens — Input: {total_input_tokens}, Output: {total_output_tokens}[/dim]")
 
 if __name__ == "__main__":
