@@ -1,0 +1,22 @@
+{
+  "model": "gpt-4o",
+  "system": "You are a helpful assistant.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How to get a great job working remotely? Restrict answer to 300 chars."
+    },
+    {
+      "role": "assistant",
+      "content": "```json\n{\n  \"steps\": [\n    \"Update your resume and LinkedIn profile with remote work skills.\",\n    \"Search job boards focusing on remote jobs (e.g., Remote.co, We Work Remotely).\",\n    \"Network on platforms like LinkedIn.\",\n    \"Tailor applications to highlight remote experience.\",\n    \"Prepare for virtual interviews.\"\n  ]\n}\n```"
+    },
+    {
+      "role": "user",
+      "content": "what other job boards might be great?"
+    },
+    {
+      "role": "assistant",
+      "content": "```json\n{\n  \"job_boards\": [\n    \"FlexJobs\",\n    \"AngelList\",\n    \"Remote OK\",\n    \"JustRemote\",\n    \"Working Nomads\",\n    \"PowerToFly\",\n    \"RemoteLeads\",\n    \"Virtual Vocations\",\n    \"Jobspresso\",\n    \"Hubstaff Talent\"\n  ]\n}\n```"
+    }
+  ]
+}
