@@ -14,21 +14,17 @@ EMBED_MODEL = "text-embedding-3-small"
 
 
 def embed(text: str) -> list[float]:
-    """Return the embedding vector for a string."""
-    # TODO: call client.embeddings.create() and return the vector
-    pass
+    response = client.embeddings.create(model=EMBED_MODEL, input=text)
+    return response.data[0].embedding
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Return cosine similarity between two vectors."""
-    # TODO: implement using numpy
-    pass
-
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 def load_docs() -> dict[str, str]:
     """Load all .txt files from DOCS_DIR. Returns {filename: content}."""
-    # TODO: implement
-    pass
+    return {f.name: f.read_text() for f in DOCS_DIR.glob("*.txt")}
 
 
 def load_or_build_index() -> dict[str, list[float]]:
@@ -37,8 +33,13 @@ def load_or_build_index() -> dict[str, list[float]]:
     otherwise embed all docs and save to cache.
     Returns {filename: embedding_vector}.
     """
-    # TODO: implement
-    pass
+    if CACHE_FILE.exists():
+        return json.loads(CACHE_FILE.read_text())
+
+    docs = load_docs()
+    index = {name: embed(content) for name, content in docs.items()}
+    CACHE_FILE.write_text(json.dumps(index))
+    return index
 
 
 def search(query: str, index: dict[str, list[float]], top_k: int = 3) -> list[tuple[str, float]]:
@@ -46,8 +47,9 @@ def search(query: str, index: dict[str, list[float]], top_k: int = 3) -> list[tu
     Embed the query, compute cosine similarity against all docs,
     return top_k results as [(filename, score)].
     """
-    # TODO: implement
-    pass
+    query_vec = embed(query)
+    scores = [(name, cosine_similarity(query_vec, vec)) for name, vec in index.items()]
+    return sorted(scores, key=lambda x: x[1], reverse=True)[:top_k]
 
 
 if __name__ == "__main__":
