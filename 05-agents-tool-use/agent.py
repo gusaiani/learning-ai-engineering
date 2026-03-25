@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 import httpx
-from openai import OpenAI
+from anthropic import Anthropic
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
@@ -14,10 +14,10 @@ from rich.markdown import Markdown
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-client = OpenAI()
+client = Anthropic()
 console = Console()
 
-MODEL = "gpt-4o-mini"
+MODEL = "claude-sonnet-4-20250514"
 MAX_ITERATIONS = 10
 
 SYSTEM_PROMPT = """You are a research assistant with access to tools.
@@ -27,58 +27,49 @@ When you have enough information, provide a clear, well-structured answer.
 Cite your sources when possible."""
 
 
-# ── Tool definitions (OpenAI function-calling format) ─────────────
+# ── Tool definitions ─────────────────────────────────────────────
 
 TOOLS = [
     {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for current information. Use this to find facts, statistics, news, or any information you're not confident about.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    }
-                },
-                "required": ["query"]
-            }
+        "name": "web_search",
+        "description": "Search the web for current information. Use this to find facts, statistics, news, or any information you're not confident about.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                }
+            },
+            "required": ["query"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "calculator",
-            "description": "Evaluate a mathematical expression. Supports basic arithmetic, exponents (**), sqrt, and common math functions.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "The math expression to evaluate, e.g. '(42 * 1.15) + 100'"
-                    }
-                },
-                "required": ["expression"]
-            }
+        "name": "calculator",
+        "description": "Evaluate a mathematical expression. Supports basic arithmetic, exponents (**), sqrt, and common math functions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "The math expression to evaluate, e.g. '(42 * 1.15) + 100'"
+                }
+            },
+            "required": ["expression"]
         }
     },
     {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read the contents of a local file. Use this to analyze data files, configs, or documents on disk.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to read"
-                    }
-                },
-                "required": ["path"]
-            }
+        "name": "read_file",
+        "description": "Read the contents of a local file. Use this to analyze data files, configs, or documents on disk.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to read"
+                }
+            },
+            "required": ["path"]
         }
     },
 ]
@@ -89,59 +80,30 @@ TOOLS = [
 
 def web_search(query: str) -> str:
     """Search the web using DuckDuckGo's HTML page and extract results."""
-    import re
-
-    resp = httpx.get(
-        "https://html.duckduckgo.com/html/",
-        params={"q": query},
-        headers={"User-Agent": "Mozilla/5.0"},
-        follow_redirects=True,
-    )
-
-    results = []
-    for match in re.finditer(
-        r'<a rel="nofollow" class="result__a"[^>]*>(.+?)</a>.*?'
-        r'<a class="result__snippet"[^>]*>(.+?)</a>',
-        resp.text,
-        re.DOTALL,
-    ):
-        title = re.sub(r"<.*?>", "", match.group(1)).strip()
-        snippet = re.sub(r"<.*?>", "", match.group(2)).strip()
-        results.append(f"- {title}: {snippet}")
-        if len(results) >= 5:
-            break
-    return "\n".join(results) if results else "No results found."
+    # TODO: use httpx to hit DuckDuckGo's search
+    # Hint: GET "https://html.duckduckgo.com/html/" with params={"q": query}
+    # Parse the response text for result snippets
+    pass
 
 
 def calculator(expression: str) -> str:
     """Safely evaluate a math expression."""
-    allowed_names = {
-        "abs": abs, "round": round, "min": min, "max": max,
-        "sqrt": math.sqrt, "pow": pow, "log": math.log,
-        "sin": math.sin, "cos": math.cos, "pi": math.pi, "e": math.e,
-    }
-    try:
-        result = eval(expression, {"__builtins__": {}}, allowed_names)
-        return str(result)
-    except Exception as e:
-        return f"Error: {e}"
+    # TODO: use a safe subset of Python to evaluate math
+    # Hint: only allow math functions, no builtins
+    # Return the result as a string, or an error message
+    pass
 
 
 def read_file(path: str) -> str:
     """Read a file and return its contents (truncated if too long)."""
-    try:
-        text = Path(path).read_text()
-        if len(text) > 2000:
-            return text[:2000] + "n... (truncated)"
-        return text
-    except FileNotFoundError:
-        return f"Error: file not found: {path}"
-    except Exception as e:
-        return f"Error reading file: {e}"
+    # TODO: read the file, truncate to ~2000 chars if needed
+    # Return an error message if file not found
+    pass
 
-def execute_tool(name: str, arguments: str) -> str:
+
+def execute_tool(name: str, input_data: dict) -> str:
     """Route a tool call to the right function."""
-    # TODO: parse the JSON arguments string, dispatch to the right function
+    # TODO: dispatch to the right function based on name
     # Return the result as a string
     # Catch exceptions and return error messages
     pass
@@ -153,16 +115,15 @@ def execute_tool(name: str, arguments: str) -> str:
 def run_agent(query: str, verbose: bool = False) -> str:
     """
     Run the agent loop:
-    1. Send the query to OpenAI with tools
-    2. If the model calls a tool, execute it and send the result back
-    3. Repeat until the model gives a final answer or we hit MAX_ITERATIONS
+    1. Send the query to Claude with tools
+    2. If Claude calls a tool, execute it and send the result back
+    3. Repeat until Claude gives a final answer or we hit MAX_ITERATIONS
     4. Return the final answer text
     """
     # TODO: implement the full agent loop
-    # - maintain a messages list (starting with system + user)
+    # - maintain a messages list
     # - use console.print() with rich to show tool calls as they happen
-    # - handle finish_reason == "stop" vs "tool_calls"
-    # - for each tool call, append a message with role="tool" and tool_call_id
+    # - handle stop_reason == "end_turn" vs "tool_use"
     pass
 
 
