@@ -258,6 +258,22 @@ def run_eval(test_cases: list[TestCase], verbose: bool = False) -> list[EvalResu
         similarity = score_semantic_similarity(tc.expected_answer, actual)
         judge = score_llm_judge(tc.question, tc.expected_answer, actual)
 
+        result = EvalResult(
+            test_case=tc,
+            actual_answer=actual,
+            exact_match=exact,
+            semantic_similarity=similarity,
+            llm_judge_scores={
+                "correctness": judge.get("correctness", 1),
+                "completeness": judge.get("completeness", 1),
+                "faithfulness": judge.get("faithfulness", 1),
+            },
+            llm_judge_explanation=judge.get("explanation", "")
+        )
+        results.append(result)
+
+    return results
+
     
 
 def compute_summary(results: list[EvalResult]) -> dict:
@@ -267,15 +283,56 @@ def compute_summary(results: list[EvalResult]) -> dict:
     - Per-category breakdowns
     - Pass rate (exact match)
     """
-    # TODO: aggregate the results into a summary dict
-    pass
+    summary = {
+        "total_cases": len(results),
+        "exact_match_rate": sum(r.exact_match for r in results) / len(results),
+        "avg_semantic_similarity": float(np.mean([r.semantic_similarity for r in results])),
+        "avg_correctness": float(np.mean([r.llm_judge_scores["correctness"] for r in results])),
+        "avg_completeness": float(np.mean([r.llm_judge_scores["completeness"] for r in results])),
+        "avg_faithfulness": float(np.mean([r.llm_judge_scores["faithfulness"] for r in results])),
+        "by_category": {},
+    }
+
+    for cat in set(r.test_case.category for r in results):
+        cat_results = [r for r in results if r.test_case.category == cat]
+        summary["by_category"][cat] = {
+            "count": len(cat_results),
+            "exact_match_rate": sum(r.exact_match for r in cat_results) / len(cat_results),
+            "avg_similarity": float(np.mean([r.semantic_similarity for r in cat_results])),
+            "avg_correctness": float(np.mean([r.llm_judge_scores["correctness"] for r in cat_results])),
+            "avg_completeness": float(np.mean([r.llm_judge_scores["completeness"] for r in cat_results])),
+            "avg_faithfulness": float(np.mean([r.llm_judge_scores["faithfulness"] for r in cat_results])),
+        }
+
+    return summary
 
 
 def save_results(results: list[EvalResult], summary: dict) -> Path:
     """Save results and summary to a timestamped JSON file."""
-    # TODO: serialize to JSON, save to RESULTS_DIR
-    # Return the path to the saved file
-    pass
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = RESULTS_DIR / f"run_{timestamp}.json"
+
+    data = {
+        "timestamp": timestamp,
+        "summary": summary,
+        "results": [
+            {
+                "question": r.test_case.question,
+                "category": r.test_case.category,
+                "difficulty": r.test_case.difficulty,
+                "expected_answer": r.test_case.expected_answer,
+                "actual_answer": r.actual_answer,
+                "exact_match": r.exact_match,
+                "semantic_similarity": r.semantic_similarity,
+                "llm_judge_scores": r.llm_judge_scores,
+                "llm_judge_explanation": r.llm_judge_explanation,
+            }
+            for r in results
+        ],
+    }
+
+    filename.write_text(json.dumps(data, indent=2))
+    return filename
 
 
 # ── Display ───────────────────────────────────────────────────────
@@ -283,11 +340,43 @@ def save_results(results: list[EvalResult], summary: dict) -> Path:
 
 def display_results(results: list[EvalResult], summary: dict):
     """Show a rich table with per-case results and a summary panel."""
-    # TODO: build a Rich table with columns:
-    # Category | Question (truncated) | Exact Match | Similarity | Judge Avg | Pass/Fail
-    # Color-code: green for pass, red for fail
-    # Show summary panel at the end
-    pass
+    table = Table(title="Eval Results")
+    table.add_column("Category", style="cyan")
+    table.add_column("Question", max_width=50)
+    table.add_column("Exact", justify="center")
+    table.add_column("Similarity", justify="center")
+    table.add_column("Judge Avg", justify="center")
+    table.add_column("Pass/Fail", justify="center")
+
+    for r in results:
+        judge_avg = np.mean(list(r.llm_judge_scores.values()))
+        passed = judge_avg >= 3.0 and r.semantic_similarity >= 0.7
+
+        exact_str = "[green]✓[/green]" if r.exact_match else "[red]✗[/red]"
+        sim_color = "green" if r.semantic_similarity >= 0.7 else "red"
+        judge_color = "green" if judge_avg >= 3.0 else "red"
+        pass_str = "[green]PASS[/green]" if passed else "[red]FAIL[/red]"
+
+        table.add_row(
+            r.test_case.category,
+            r.test_case.question[:50] + "…",
+            exact_str,
+            f"[{sim_color}]{r.semantic_similarity:.2f}[/{sim_color}]",
+            f"[{judge_color}]{judge_avg:.1f}[/{judge_color}]",
+            pass_str,
+        )
+
+    console.print(table)
+
+    console.print(Panel(
+        f"Cases: {summary['total_cases']}  |  "
+        f"Exact match: {summary['exact_match_rate']:.0%}  |  "
+        f"Avg similarity: {summary['avg_semantic_similarity']:.2f}  |  "
+        f"Correctness: {summary['avg_correctness']:.1f}  |  "
+        f"Completeness: {summary['avg_completeness']:.1f}  |  "
+        f"Faithfulness: {summary['avg_faithfulness']:.1f}",
+        title="Summary",
+    ))
 
 
 def compare_runs(file_a: Path, file_b: Path):
@@ -296,8 +385,43 @@ def compare_runs(file_a: Path, file_b: Path):
     - Show metric deltas (↑ improvement, ↓ regression)
     - Highlight any category where faithfulness dropped
     """
-    # TODO: load both JSON files, compute deltas, display comparison table
-    pass
+    a = json.loads(file_a.read_text())
+    b = json.loads(file_b.read_text())
+
+    console.print(Panel(
+        f"[dim]{file_a.name}[/dim] vs [bold]{file_b.name}[/bold]",
+        title="Run Comparison",
+    ))
+
+    metrics = [
+        ("exact_match_rate", "Exact Match Rate"),
+        ("avg_semantic_similarity", "Avg Similarity"),
+        ("avg_correctness", "Avg Correctness"),
+        ("avg_completeness", "Avg Completeness"),
+        ("avg_faithfulness", "Avg Faithfulness"),
+    ]
+
+    table = Table()
+    table.add_column("Metric")
+    table.add_column("Run A", justify="center")
+    table.add_column("Run B", justify="center")
+    table.add_column("Delta", justify="center")
+
+    for key, label in metrics:
+        val_a = a["summary"][key]
+        val_b = b["summary"][key]
+        delta = val_b - val_a
+        arrow = "↑" if delta > 0 else "↓" if delta < 0 else "="
+        color = "green" if delta > 0 else "red" if delta < 0 else "white"
+
+        table.add_row(
+            label,
+            f"{val_a:.2f}",
+            f"{val_b:.2f}",
+            f"[{color}]{arrow} {delta:+.2f}[/{color}]",
+        )
+
+    console.print(table)
 
 
 # ── CLI ──────────────────────────────────────────────────────────
