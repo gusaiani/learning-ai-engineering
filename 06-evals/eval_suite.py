@@ -196,7 +196,7 @@ def score_llm_judge(question: str, expected: str, actual: str) -> dict:
     )
 
     raw = response.choices[0].message.content
-    
+
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
@@ -213,12 +213,7 @@ def score_llm_judge(question: str, expected: str, actual: str) -> dict:
 
 
 def ask_rag(question: str) -> str:
-    """
-    Send a question to your RAG system and get the answer.
-
-    Option A: Import and call your Module 04 rag.py directly
-    Option B: Implement a simple mock RAG for testing the eval framework
-    """
+    """Send a question to GPT-4o-mini (mock RAG — no retrieval, just LLM knowledge)."""
     system_msg = (
         "You are a Q&A system answering questions about Graham & Dodd's "
         "Security Analysis (Chapters 9 & 11). Answer concisely based only "
@@ -241,7 +236,7 @@ def ask_rag(question: str) -> str:
 # ── Eval runner ───────────────────────────────────────────────────
 
 
-def run_eval(test_cases: list[TestCase], verbose: bool = False) -> list[EvalResult]:
+def run_eval(test_cases: list[TestCase]) -> list[EvalResult]:
     """
     Run the full eval suite:
     1. For each test case, get the RAG answer
@@ -274,7 +269,7 @@ def run_eval(test_cases: list[TestCase], verbose: bool = False) -> list[EvalResu
 
     return results
 
-    
+
 
 def compute_summary(results: list[EvalResult]) -> dict:
     """
@@ -431,7 +426,6 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="RAG Eval Suite")
     parser.add_argument("--category", help="Run only a specific category")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show detailed output")
     parser.add_argument(
         "--compare", nargs=2, metavar="FILE",
         help="Compare two result files"
@@ -455,7 +449,7 @@ if __name__ == "__main__":
             title="🧪 RAG Eval Suite"
         ))
 
-        results = run_eval(cases, verbose=args.verbose)
+        results = run_eval(cases)
         summary = compute_summary(results)
 
         display_results(results, summary)
