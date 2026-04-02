@@ -23,15 +23,40 @@ def generate_synthetic_tickets(category: str, count: int) -> list[dict]:
     Use GPT-4o-mini to generate realistic support tickets for a given category.
     Returns a list of {"user_message": ..., "assistant_response": ...} dicts.
     """
-    # TODO: prompt GPT-4o-mini to generate diverse, realistic tickets
-    # Each ticket should have a natural user message and a structured JSON response
-    pass
+    prompt = (
+        f"Generate {count} realistic tech support tickets for the category '{category}'.\n"
+        "Each ticket should have a natural, varied user message and a structured JSON response.\n"
+        "The JSON response must have: category, priority (low/medium/high), and response (1-2 sentences).\n\n"
+        "Return a JSON array of objects with 'user_message' and 'assistant_response' keys.\n"
+        "The assistant_response should be a JSON string matching the system prompt format.\n"
+        "Make the user messages diverse — different tones, lengths, and specific details."
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+    )
+
+    raw = response.choices[0].message.content
+    data = json.loads(raw)
+
+    # The model may wrap the array in a key like "tickets"
+    if isinstance(data, dict):
+        data = list(data.values())[0]
+
+    return data
 
 
 def build_jsonl_example(user_message: str, assistant_response: str) -> dict:
     """Convert a single example into OpenAI chat fine-tuning format."""
-    # TODO: return {"messages": [system, user, assistant]}
-    pass
+    return {
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_response}
+        ]
+    }
 
 
 def validate_dataset(examples: list[dict]) -> dict:
@@ -42,8 +67,35 @@ def validate_dataset(examples: list[dict]) -> dict:
     - Check category balance
     Returns stats dict.
     """
-    # TODO: validate format, count tokens, check balance
-    pass
+    category_counts = {}
+    format_errors = 0
+
+    for ex in examples:
+        msgs = ex.get("messages", [])
+
+        # Check structure: must have exactly 3 messages (system, user, assistant)
+        if len(msgs) != 3:
+            format_errors += 1
+            continue
+
+        roles = [m["role"] for m in msgs]
+        if roles != ["system", "user", "assistant"]:
+            format_errors += 1
+            continue
+
+        # Extract category from assistant response
+        try:
+            parsed = json.loads(msgs[2]["content"])
+            cat = parsed.get("category", "unknown")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        except (json.JSONDecodeError, TypeError):
+            format_errors += 1
+
+    return {
+        "total_examples": len(examples),
+        "format_errors": format_errors,
+        "category_distribution": category_counts,
+    }
 
 
 def split_and_save(examples: list[dict], train_ratio: float = 0.8):
