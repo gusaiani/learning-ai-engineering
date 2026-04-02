@@ -190,15 +190,52 @@ async def save_conversation(redis_client, conversation_id: str, messages: list[d
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     """Non-streaming chat endpoint. Returns the full response as JSON."""
-    # TODO:
-    # 1. Check rate limit
-    # 2. Check cache
-    # 3. Load conversation history
-    # 4. Call LLM (with retries and timeout)
-    # 5. Save to cache and conversation history
-    # 6. Return ChatResponse with timing and metadata
-    pass
+    start = time.time()
+    request_id = request.state.request_id
+    r = request.app.state.redis
+    client = request.app.state.openai
 
+    # 1. Rate limit
+    client_ip = request.client.host
+    if not await check_rate_limit(client_ip, r):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # 2. Cache check
+    conversation_id = req.conversation_id or str(uuid.uuid4())
+    cache_key = make_cache_key(req.message, conversation_id)
+    cached = await get_cached(r, cache_key)
+
+    if cached:
+        duration_ms = (time.time() - start) * 1000
+        return ChatResponse(
+            response=cached,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            cached=True,
+            duration_ms=round(duration_ms, 2),
+        )
+
+    # 3. Load conversation history
+    history = await get_conversation(r, conversation_id)
+    history.append({"role": "user", "content": req.message})
+
+    # 4. Call LLM
+    answer = await call_llm(client, history)
+
+    # 5. save to cache and conversation history
+    await set_cached(r, cache_key, answer)
+    history.append({"role": "assistant", "content": answer})
+    await save_conversation(r, conversation_id, history)
+
+    # 6. Return response
+    duration_ms = (time.time() - start) * 1000
+    return ChatResponse(
+        response=answer,
+        conversation_id=conversation_id,
+        request_id=request_id,
+        cached=False,
+    duration_ms=round(duration_ms, 2),
+    )
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest, request: Request):
@@ -206,15 +243,19 @@ async def chat_stream(req: ChatRequest, request: Request):
     Streaming chat endpoint via SSE.
     Sends tokens as server-sent events as they arrive from the LLM.
     """
-    # TODO:
-    # 1. Check rate limit
-    # 2. Check cache — if hit, stream the cached response with small delays
-    # 3. Load conversation history
-    # 4. Stream LLM response, yielding SSE events
-    # 5. After stream completes, save to cache and conversation history
-    # 6. Send [DONE] event
-    # 7. If client disconnects, stop the stream
-    pass
+    request_id = request.state.request_id
+    r = request.app.state.redis
+    client = request.app.state.openai
+
+    # 1. Rate limit
+    client_ip = request.client.host
+    if not await check_rate_limit(client_ip, r):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # 2. Setup
+    conversation_id = req.conversation_id or str(uuid.uuid4())
+    cache_key = make_cache_key(req.message, conversation_id)
+    cached = await get_cached(r, cache_key)
 
 
 @app.get("/health")
