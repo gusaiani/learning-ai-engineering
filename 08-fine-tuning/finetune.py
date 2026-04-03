@@ -11,25 +11,31 @@ client = OpenAI()
 
 def upload_training_file(filepath: str) -> str:
     """Upload a JSONL file to OpenAI and return the file ID."""
-    # TODO: use client.files.create()
-    pass
-
+    with open(filepath, "rb") as f:
+        response = client.files.create(file=f, purpose="fine-tune")
+    return response.id
 
 def create_fine_tuning_job(file_id: str) -> str:
     """Create a fine-tuning job and return the job ID."""
-    # TODO: use client.fine_tuning.jobs.create()
-    # Model: gpt-4o-mini-2024-07-18
-    # Hyperparameters: n_epochs=3
-    pass
-
+    job = client.fine_tuning.jobs.create(
+        training_file=file_id,
+        model="gpt-4o-mini-2024-07-18",
+        hyperparameters={"n_epochs": 3},
+    )
+    return job.id
 
 def monitor_job(job_id: str) -> str:
     """Poll until the job completes. Return the fine-tuned model ID."""
-    # TODO: poll client.fine_tuning.jobs.retrieve() every 30 seconds
-    # Print status updates and training metrics
-    # Return the fine-tuned model name when done
-    pass
+    while True:
+        job = client.fine_tuning.jobs.retrieve(job_id)
+        print(f"  Status: {job.status}")
 
+        if job.status == "succeeded":
+            return job.fine_tuned_model
+        if job.status == "failed":
+            raise RuntimeError(f"Fine-tuning failed: {job.error}")
+
+        time.sleep(30)
 
 if __name__ == "__main__":
     print("Uploading training file...")

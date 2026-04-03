@@ -100,8 +100,19 @@ def validate_dataset(examples: list[dict]) -> dict:
 
 def split_and_save(examples: list[dict], train_ratio: float = 0.8):
     """Shuffle, split into train/test, save as JSONL files."""
-    # TODO: shuffle, split, write train.jsonl and test.jsonl
-    pass
+    random.shuffle(examples)
+
+    split_idx = int(len(examples) * train_ratio)
+    train_set = examples[:split_idx]
+    test_set = examples[split_idx:]
+
+    for filename, dataset in [("train.jsonl", train_set), ("test.jsonl", test_set)]:
+        with open(filename, "w") as f:
+            for example in dataset:
+                f.write(json.dumps(example) + "\n")
+
+    print(f"  Train: {len(train_set)} examples → train.jsonl")
+    print(f"  Test: {len(test_set)} examples → test.jsonl")
 
 
 if __name__ == "__main__":
