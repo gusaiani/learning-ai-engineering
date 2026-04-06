@@ -1,0 +1,18 @@
+--- gpt-4o-mini example 0 ---
+{"category": "feature_request", "priority": "medium", "response": "Thank you for your suggestion! We appreciate your feedback on adding recurring tasks, as it could enhance our service. We will pass your request along to our development team for consideration."}
+
+--- gpt-4o-mini example 1 ---
+{"category": "feature_request", "priority": "medium", "response": "Thank you for your suggestion! Expanding the character limit on notes is a great idea, and I will pass your request on to our development team for consideration."}
+
+--- gpt-4o-mini example 2 ---
+{"category": "how_to", "priority": "medium", "response": "To create a new email folder, navigate to your email client, find the 'Folders' section, and look for an option to add or create a new folder. Follow the prompts to name and save your new folder."}
+
+--- ft:gpt-4o-mini-2024-07-18:personal::DQbFYtIq example 0 ---
+{"category":"feature_request","priority":"high","response":"Thank you for the suggestion! Recurring tasks are a valuable feature, and we’ll prioritize this for our upcoming update."}
+
+--- ft:gpt-4o-mini-2024-07-18:personal::DQbFYtIq example 1 ---
+{"category":"feature_request","priority":"medium","response":"We appreciate your feedback! Increasing the character limit on notes is a valuable enhancement that we will explore further."}
+
+--- ft:gpt-4o-mini-2024-07-18:personal::DQbFYtIq example 2 ---
+{"category": "how_to", "priority": "low", "response": "To create a new email folder, right-click on your inbox, select 'New Folder', and then name the folder as you wish."}
+
