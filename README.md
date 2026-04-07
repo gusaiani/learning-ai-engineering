@@ -18,7 +18,7 @@ A project-based course to go from zero to $200k+ AI Engineer, working remotely f
 | 06 | [Evals — Measuring LLM Quality](./06-evals/) | LLM-as-judge, regression testing, benchmarks | Eval suite for your RAG | ✅ |
 | 07 | [Streaming & Production Patterns](./07-streaming-production/) | Streaming, async, error handling, caching | Production-ready API | ✅ |
 | 08 | [Fine-tuning](./08-fine-tuning/) | LoRA, QLoRA, datasets, PEFT | Fine-tune a model on custom data | ✅ |
-| 09 | [Multi-agent Systems](./09-multi-agent/) | Orchestration, parallelism, handoffs | Multi-agent research pipeline | |
+| 09 | [Multi-agent Systems](./09-multi-agent/) | Orchestration, parallelism, handoffs | Multi-agent research pipeline | ✅ |
 | 10 | [Observability & LLMOps](./10-llmops/) | Tracing, cost tracking, latency, monitoring | Instrumented production app | |
 | 11 | [Multimodal — Vision & Audio](./11-multimodal/) | Image inputs, audio transcription, OCR | Document intelligence app | |
 | 12 | [System Design for AI](./12-system-design/) | Architecture, trade-offs, scalability | Design doc for a real system | |
