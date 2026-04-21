@@ -152,17 +152,19 @@ The reranker can be a small cross-encoder or an LLM-based relevance check, but i
 
 ### 5.5 Query understanding
 
-<!--
-Do you rewrite / expand / decompose the user query before retrieval? How?
--->
+We rewrite queries selectively rather than on every request. Support queries fall into two rough buckets: precise queries that already retrieve well (pasted error strings, specific feature names, invoice IDs) and vague or context-dependent queries where the raw user text is a poor retrieval key ("it's still broken", "how do I fix this", "what about the other plan"). Rewriting every query would add a full LLM round-trip to the hot path for no benefit on the precise bucket, which 5.4's hybrid retrieval already handles well via BM25. So a lightweight gate decides per request: skip rewriting when the query contains strong lexical anchors (error codes, quoted strings, known product nouns) and invoke the rewriter otherwise.
+
+When rewriting is triggered, we do three things in a single small-model call, capped at roughly 150 to 200 ms p95. First, **context resolution**: resolve pronouns and references against the last two or three turns of conversation so "that error" or "the other plan" becomes a self-contained query. Second, **expansion**: generate one or two paraphrases that add likely product terminology the user did not use, which improves recall on the dense side without polluting BM25. Third, **decomposition**: if the query contains multiple independent questions ("how do I enable SSO and what does it cost on the Team plan"), split it into separate retrieval calls whose results are merged before generation. We deliberately do not use HyDE-style hypothetical-answer generation in v1; it is expensive, and our hybrid retriever plus reranker already closes most of the gap HyDE is designed to close.
+
+The rewriter runs on a small, fast model (same tier as the intent classifier) with a strict timeout. If it times out or returns malformed output, we fall back to the raw user query rather than blocking the request, and log the failure for offline analysis. Every rewritten query is stored on the trace alongside the original so evals, debugging, and regression tests can compare retrieval quality with and without rewriting per query class.
 
 ### 5.6 Context assembly
 
-<!--
-- Token budget for retrieved context
-- How you handle "too many good chunks" (compression? just truncate?)
-- Citation format returned to the generator
--->
+We allocate roughly 2,500 tokens of the generator's input budget to retrieved chunks, out of a total input ceiling of about 6,000 tokens per request. The remaining ~3,500 tokens cover the system prompt, the last two or three turns of conversation history, tool schemas on the agent path, and the user's current question, with a safety margin. This sits well inside the 128k context window of the models in section 8, but context-window size is not the constraint: input tokens drive both cost and latency, and generator quality degrades once context is padded with weakly relevant material ("lost in the middle"), so the budget is set for the answer quality sweet spot, not the model's technical maximum.
+
+The 2,500-token figure is derived from 5.4, which caps us at 4 to 6 reranked chunks, and 5.2, which targets 300 to 500 tokens per chunk - giving a natural range of 1,600 to 2,400 tokens of dense retrieval content with a small cushion for heading paths and source metadata we inject per chunk. The budget is a soft cap enforced at assembly time rather than a hard retriever limit: reranking has already pruned to a small candidate set, so assembly rarely needs to drop chunks, and when it does we apply the rules in step 2 rather than silently truncating mid-chunk.
+
+When reranked chunks exceed the 2,500-token budget, we drop the lowest-scoring chunks until we fit, rather than compressing or truncating. Reranking has already produced a precision-ordered list, so the marginal chunk is by construction the least useful one to keep; dropping it costs the least expected answer quality. Truncating mid-chunk is off the table because it orphans sentences from their heading path and source metadata, which the generator relies on fo r citation accuracy (step 3). LLM-based compression is tempting but adds a synchronous model call on the hot path — 200 to 500 ms and a real dollr cost per request — for a gain we have not measured, and it introduces a lossy transform before the generator even sees the evidence, making retrieval bugs harder to diagnose from traces.
 
 ---
 
