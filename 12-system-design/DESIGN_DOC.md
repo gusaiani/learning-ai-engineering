@@ -164,42 +164,63 @@ We allocate roughly 2,500 tokens of the generator's input budget to retrieved ch
 
 The 2,500-token figure is derived from 5.4, which caps us at 4 to 6 reranked chunks, and 5.2, which targets 300 to 500 tokens per chunk - giving a natural range of 1,600 to 2,400 tokens of dense retrieval content with a small cushion for heading paths and source metadata we inject per chunk. The budget is a soft cap enforced at assembly time rather than a hard retriever limit: reranking has already pruned to a small candidate set, so assembly rarely needs to drop chunks, and when it does we apply the rules in step 2 rather than silently truncating mid-chunk.
 
-When reranked chunks exceed the 2,500-token budget, we drop the lowest-scoring chunks until we fit, rather than compressing or truncating. Reranking has already produced a precision-ordered list, so the marginal chunk is by construction the least useful one to keep; dropping it costs the least expected answer quality. Truncating mid-chunk is off the table because it orphans sentences from their heading path and source metadata, which the generator relies on fo r citation accuracy (step 3). LLM-based compression is tempting but adds a synchronous model call on the hot path — 200 to 500 ms and a real dollr cost per request — for a gain we have not measured, and it introduces a lossy transform before the generator even sees the evidence, making retrieval bugs harder to diagnose from traces.
+When reranked chunks exceed the 2,500-token budget, we drop the lowest-scoring chunks until we fit, rather than compressing or truncating. Reranking has already produced a precision-ordered list, so the marginal chunk is by construction the least useful one to keep; dropping it costs the least expected answer quality. Truncating mid-chunk is off the table because it orphans sentences from their heading path and source metadata, which the generator relies on for citation accuracy (step 3). LLM-based compression is tempting but adds a synchronous model call on the hot path — 200 to 500 ms and a real dollr cost per request — for a gain we have not measured, and it introduces a lossy transform before the generator even sees the evidence, making retrieval bugs harder to diagnose from traces.
 
 ---
 
 ## 6. Multi-Tenancy
 
-<!--
-This is the section most design docs fail on. Be paranoid here.
--->
-
 ### 6.1 Data isolation
 
-<!--
-How is workspace A's data guaranteed not to reach workspace B?
-Name at least TWO independent mechanisms (belt + suspenders).
--->
+Tenant isolation is the failure mode we treat as catastrophic: one leak of workspace A's data into workspace B's response is worse than hours of downtime. So we enforce isolation with two independent mechanisms whose failure modes do not overlap, rather than trusting any single layer.
+
+**Mechanism 1 — Postgres row-level security (RLS).** Every tenant-scoped table carries a non-null `workspace_id` column, and RLS policies restrict `SELECT`, `INSERT`, `UPDATE`, and `DELETE` to rows where `worskspace_id = current_setting('app.workspace_id')::uuid`. The session variable is set from the authenticated request context at the start of every transaction and cannot be forged by application code further down the stack. This catches the class of bugs where a developer writes a query that forgets the `WHERE workspace_id = ?` clause — the database itself refuses to return cross-tenant rows, so an application bug degrades to "no results" rather than "wrong tenant's results".
+
+**Mechanism 2 — retrieval-time scope filter in the RAG path.** The vector store and BM25 index both store `workspace_id` as required metadata on every chunk, and the retrieval service rejects any query that does not supply an explicit `workspace_id` filter resolved from the request's auth context, not from user input. Shared public knowledge is indexed under a reserved `workspace_id = "__shared__"` scope that every tenant can read but no tenant can write. This catches the class of failures RLS cannot catch: a misconfigured RLS policy, a direct connection that bypasses the session variable, or a future migration to a vector store that has no equivalent of RLS. Retrieval still refuses to return another tenant's chunks because the filter is applied in application code above the store.
+
+The two mechanisms fail independently. RLS protects against forgotten `WHERE` clauses but trusts that the session variable is set correctly; the retrieval filter protects against misconfigured RLS or a non-Postgres datastore but trusts that the application resolves `workspace_id` from auth rather than from request bodies. A single bug has to defeat both layers to leak data, and the two layers are owned by different parts of the codebase (DB migrations vs. retrieval service), so a single careless commit is unlikely to weaken both at once.
+
+We also enforce a tertiary check at the trace layer: every outbound response is tagged with the `workspace_id` it was generated for, and a post-response guardrail rejects responses that cite chunks whose `workspace_id` does not match. This is not counted as one of the two primary mechanisms because it runs after generation and is a detector rather than a preventer, but it closes the loop by making cross-tenant leaks observable in production rather than silent.e
 
 ### 6.2 Per-tenant customization
 
-<!--
-- Custom system prompt per tenant?
-- Per-tenant tool config / allowlist?
-- Per-tenant model overrides (e.g. enterprise tenants on a stronger model)?
--->
+Per-tenant customization is limited by design. Every knob we expose is a knob an attacker or a misconfigured admin can turn, and the isolation guarantees from §6.1 are only as strong as the config layer that drives them. We allow three customization surfaces and explicitly forbid the rest in v1.
+
+**System prompt overrides.** Tenants on Business and Enterprise plans can append a short "voice and policy" block to the base system prompt — brand name, tone guidance, escalation phrasing, off-limits topics specific to their product. The base prompt is immutable and always wins on conflicts: tenant overrides cannot disable guardrails, cannot grant tools, cannot change the citation requirement, and are capped at roughly 500 tokens to bound cost and prompt-injection surface. Overrides are versioned and reviewed in the admin UI diff view before they go live, and every trace records the prompt version so regressions tie back to a specific change.
+
+**Tool allowlist.** The full tool catalog from §7.1 is opt-in per tenant. A fresh workspace starts with the read-only tools enabled (`lookup_account`, `search_kb`) and write tools disabled. Admins enable write tools (`create_ticket`, `reset_setting`) explicitly, and each write tool can be individually scoped — e.g. `reset_setting` enabled but only for a named subset of settings keys. The allowlist is enforced at the agent-loop layer: a tool call for a disabled tool is rejected before it reaches the tool implementation, and the rejection is surfaced to the user as "this workspace has not enabled that action" rather than a silent failure.
+
+**Model tier.** Enterprise tenants can opt into a stronger generator model for the Account-action and Complex-multi-step request classes from §8 — typically the flagship model instead of the default mid-tier. The router still classifies requests the same way; only the model binding for the two high-reasoning classes changes. FAQ and guardrail classes are not tier-configurable because they are cost-sensitive and quality-insensitive at scale. Tier changes flow through the same rollout process as any other model change (§12), so an enterprise tenant moving to a stronger model still goes through shadow and canary rather than flipping atomically in production.
+
+Everything else is fixed. Tenants cannot change chunking strategy, embedding model, retrieval top-k, reranker, context budget, loop caps, or guardrail thresholds. Those parameters are part of the product's quality contract; letting tenants tune them would fracture the eval surface (§11) into per-tenant configurations we cannot realistically regression-test, and would shift support burden onto our team every time a tenant's custom setting produced a bad answer.
 
 ### 6.3 Noisy-neighbor controls
 
-<!--
-- Per-tenant rate limits (requests/min, tokens/day)
-- Per-tenant spend caps
-- Fair-share queue? Priority tiers?
--->
+One tenant must not be able to degrade service for others, whether through a buggy integration hammering the API, a promotional spike, or a deliberate abuse attempt. The isolation story in §6.1 is about data; this section is about capacity. We enforce four controls, each targeting a different failure mode.
+
+**Per-tenant request rate limits.** Every workspace has a requests-per-minute cap enforced at the API gateway, keyed by `workspace_id` from the authenticated request. The cap is plan-based: Free tenants get a low ceiling sized for interactive use, Team and Business tenants get headroom for embedded-widget traffic, Enterprise tenants get negotiated limits. Limits are sliding-window, not fixed-bucket, so a tenant cannot burst `2 × limit` across a minute boundary. Rejections return `429` with a `Retry-After` header and are logged to the trace with a distinct `throttled` status so dashboards separate throttled traffic from genuine errors.
+
+**Per-tenant token budgets.** Rate limits cap request count but not cost, and one expensive agent loop can burn more tokens than a hundred FAQ lookups. So we also enforce a rolling 24-hour token budget per tenant, summed across input and output tokens for all models. The budget is advisory on the Free plan (warning only, no block) to avoid user-hostile hard cutoffs during onboarding, and enforced on paid plans with a soft cap that routes further requests to the cheapest model and a hard cap that returns a graceful "daily limit reached, contact your admin" response. Budget usage is queryable via the admin API so customers can wire their own alerting.
+
+**Per-tenant spend caps.** Token budgets are a proxy for cost but not cost itself: model routing, tool calls, and embeddings all affect dollar spend at different rates. So we also track `cost_usd` per tenant per rolling 24 hours from the trace layer (§4.6) and hard-cap it at a configurable per-tenant ceiling. Defaults are set at roughly 3× the 95th percentile of legitimate tenant spend on their plan, so normal workloads never notice the cap and abuse patterns hit it before they become material. Spend cap hits page on-call with the tenant ID so the team can disambiguate "runaway bug in a customer's integration" from "legitimate growth that should raise the cap".
+
+**Fair-share queueing at the LLM client layer.** Rate and budget limits operate per tenant in isolation, but the shared bottleneck is our aggregate LLM provider quota — we have a ceiling of tokens-per-minute with each provider, and if one Enterprise tenant with a generous rate limit saturates it, Free-tier users see elevated latency. The LLM client pool uses a weighted fair-share scheduler: each tenant gets a share of the provider quota proportional to their plan weight, with unused capacity redistributed to whoever has demand. This prevents the rich-get-richer failure mode where a big customer's spike starves everyone else while still letting tenants burst into idle headroom.
+
+We deliberately do not run separate compute clusters per tenant in v1. Dedicated infrastructure is the strongest noisy-neighbor control but the worst for unit economics at our scale, and the four controls above — request rate, token budget, spend cap, fair-share scheduling — close the gap well enough for the tenant sizes we target (§2). Dedicated-pool provisioning is a lever we pull for specific Enterprise contracts where the customer pays for the isolation, not a default tier.
 
 ### 6.4 Cost attribution
 
-<!-- Every request carries tenant_id in the trace. Billing event schema. -->
+Every request must be attributable to exactly one tenant for billing, capacity planning, and abuse investigation. The trace layer from §4.6 is the source of truth: no event-emission shortcut, no out-of-band metering, no sampling. Cost attribution uses the same trace stream that powers observability, which guarantees that what we charge for and what we can debug are always the same set of events.
+
+**Trace schema for billing.** Every trace carries `workspace_id`, `request_id`, `route_class` (§8), `model`, `tokens_in`, `tokens_out`, `tool_calls` (list of tool name plus token cost per call), `embedding_tokens`, `reranker_tokens`, `guardrail_tokens`, `cost_usd`, and `timestamp`. `cost_usd` is computed at trace-emit time from a versioned price table keyed by `(model, modality, date)` so retroactive price corrections are possible without re-reading the original payloads. Traces are append-only; a billing correction is a new compensating trace, not an edit.
+
+**Aggregation pipeline.** Traces stream into the data warehouse on a minute-level lag. An hourly job rolls them up into `(workspace_id, hour, route_class, model)` buckets with summed token counts and cost. A daily job rolls hourly into daily, and a monthly job rolls daily into billing periods. Each job is idempotent and keyed by trace `request_id` so reprocessing a backfilled hour does not double-count. The billing period close is a single transaction that freezes a tenant's monthly total and writes it to the invoice table; downstream billing (Stripe, NetSuite) reads from the invoice table, never from the raw traces.
+
+**Billable vs. non-billable.** Not all tokens are tenant-billable. Guardrail calls on rejected requests (prompt-injection block, policy violation) are logged for audit but not charged; charging a tenant for our safety layer is bad policy and incentivizes them to bypass it. Retries caused by our transient infrastructure failures are logged with `retry_reason = infrastructure` and excluded from billing. Retries caused by tenant-side failures (malformed tool arg, user typing correction) are billable. The trace schema carries a boolean `billable` field set at emit time so the aggregation pipeline can filter cleanly without business logic leaking into SQL.
+
+**Audit and dispute surface.** Tenants can query their own usage via an admin API that reads the same aggregation tables billing reads — what they see is exactly what they are charged for, at a one-day lag. Individual traces are queryable by `request_id` for dispute investigation, with content redacted but token counts and costs visible. This removes the "my bill doesn't match my logs" class of support ticket by making the log the bill.
+
+Cost attribution also feeds the spend cap in §6.3: the same aggregation that produces invoices produces real-time per-tenant running totals that the rate limiter consults. Having one accounting source for both billing and throttling means a tenant can never hit a spend cap that is not eventually reflected on their invoice, and can never be billed for usage that did not also count toward their cap.
 
 ---
 
