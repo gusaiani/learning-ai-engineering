@@ -164,7 +164,7 @@ We allocate roughly 2,500 tokens of the generator's input budget to retrieved ch
 
 The 2,500-token figure is derived from 5.4, which caps us at 4 to 6 reranked chunks, and 5.2, which targets 300 to 500 tokens per chunk - giving a natural range of 1,600 to 2,400 tokens of dense retrieval content with a small cushion for heading paths and source metadata we inject per chunk. The budget is a soft cap enforced at assembly time rather than a hard retriever limit: reranking has already pruned to a small candidate set, so assembly rarely needs to drop chunks, and when it does we apply the rules in step 2 rather than silently truncating mid-chunk.
 
-When reranked chunks exceed the 2,500-token budget, we drop the lowest-scoring chunks until we fit, rather than compressing or truncating. Reranking has already produced a precision-ordered list, so the marginal chunk is by construction the least useful one to keep; dropping it costs the least expected answer quality. Truncating mid-chunk is off the table because it orphans sentences from their heading path and source metadata, which the generator relies on for citation accuracy (step 3). LLM-based compression is tempting but adds a synchronous model call on the hot path — 200 to 500 ms and a real dollr cost per request — for a gain we have not measured, and it introduces a lossy transform before the generator even sees the evidence, making retrieval bugs harder to diagnose from traces.
+When reranked chunks exceed the 2,500-token budget, we drop the lowest-scoring chunks until we fit, rather than compressing or truncating. Reranking has already produced a precision-ordered list, so the marginal chunk is by construction the least useful one to keep; dropping it costs the least expected answer quality. Truncating mid-chunk is off the table because it orphans sentences from their heading path and source metadata, which the generator relies on for citation accuracy (step 3). LLM-based compression is tempting but adds a synchronous model call on the hot path — 200 to 500 ms and a real dollar cost per request — for a gain we have not measured, and it introduces a lossy transform before the generator even sees the evidence, making retrieval bugs harder to diagnose from traces.
 
 ---
 
@@ -174,13 +174,13 @@ When reranked chunks exceed the 2,500-token budget, we drop the lowest-scoring c
 
 Tenant isolation is the failure mode we treat as catastrophic: one leak of workspace A's data into workspace B's response is worse than hours of downtime. So we enforce isolation with two independent mechanisms whose failure modes do not overlap, rather than trusting any single layer.
 
-**Mechanism 1 — Postgres row-level security (RLS).** Every tenant-scoped table carries a non-null `workspace_id` column, and RLS policies restrict `SELECT`, `INSERT`, `UPDATE`, and `DELETE` to rows where `worskspace_id = current_setting('app.workspace_id')::uuid`. The session variable is set from the authenticated request context at the start of every transaction and cannot be forged by application code further down the stack. This catches the class of bugs where a developer writes a query that forgets the `WHERE workspace_id = ?` clause — the database itself refuses to return cross-tenant rows, so an application bug degrades to "no results" rather than "wrong tenant's results".
+**Mechanism 1 — Postgres row-level security (RLS).** Every tenant-scoped table carries a non-null `workspace_id` column, and RLS policies restrict `SELECT`, `INSERT`, `UPDATE`, and `DELETE` to rows where `workspace_id = current_setting('app.workspace_id')::uuid`. The session variable is set from the authenticated request context at the start of every transaction and cannot be forged by application code further down the stack. This catches the class of bugs where a developer writes a query that forgets the `WHERE workspace_id = ?` clause — the database itself refuses to return cross-tenant rows, so an application bug degrades to "no results" rather than "wrong tenant's results".
 
 **Mechanism 2 — retrieval-time scope filter in the RAG path.** The vector store and BM25 index both store `workspace_id` as required metadata on every chunk, and the retrieval service rejects any query that does not supply an explicit `workspace_id` filter resolved from the request's auth context, not from user input. Shared public knowledge is indexed under a reserved `workspace_id = "__shared__"` scope that every tenant can read but no tenant can write. This catches the class of failures RLS cannot catch: a misconfigured RLS policy, a direct connection that bypasses the session variable, or a future migration to a vector store that has no equivalent of RLS. Retrieval still refuses to return another tenant's chunks because the filter is applied in application code above the store.
 
 The two mechanisms fail independently. RLS protects against forgotten `WHERE` clauses but trusts that the session variable is set correctly; the retrieval filter protects against misconfigured RLS or a non-Postgres datastore but trusts that the application resolves `workspace_id` from auth rather than from request bodies. A single bug has to defeat both layers to leak data, and the two layers are owned by different parts of the codebase (DB migrations vs. retrieval service), so a single careless commit is unlikely to weaken both at once.
 
-We also enforce a tertiary check at the trace layer: every outbound response is tagged with the `workspace_id` it was generated for, and a post-response guardrail rejects responses that cite chunks whose `workspace_id` does not match. This is not counted as one of the two primary mechanisms because it runs after generation and is a detector rather than a preventer, but it closes the loop by making cross-tenant leaks observable in production rather than silent.e
+We also enforce a tertiary check at the trace layer: every outbound response is tagged with the `workspace_id` it was generated for, and a post-response guardrail rejects responses that cite chunks whose `workspace_id` does not match. This is not counted as one of the two primary mechanisms because it runs after generation and is a detector rather than a preventer, but it closes the loop by making cross-tenant leaks observable in production rather than silent.
 
 ### 6.2 Per-tenant customization
 
@@ -304,9 +304,7 @@ FAQ: 0.60 × $0.0005 = $0.00030
 Account action: 0.25 × $0.0153 = $0.00383
 Complex: 0.10 × $0.0260 = $0.00260
 Handoff: 0.05 × $0.0006 = $0.00003
-
----
-
+─────────────────────────────────────
 Subtotal (generation) = $0.00676/req
 
 Per-request overhead (every request)
@@ -336,9 +334,7 @@ Account action: 0.25 × $0.0009 = $0.00023
 Complex: 0.10 × $0.0260 = $0.00260
 Handoff: 0.05 × $0.0006 = $0.00003
 Overhead: $0.0002
-
----
-
+─────────────────────────────────────
 Total avg $/req = $0.00338
 
 LLM cost/mo = $0.00336 × 25,920,000 = ~$87,100
@@ -374,16 +370,16 @@ Infrastructure is <10% of LLM spend. The cost story is dominated by model calls 
 
 200 examples, manually curated and human-labeled. Composition mirrors production traffic distribution with deliberate oversampling of edge cases:
 
-| Category                  | Count                 | Notes                                            |
-| ------------------------- | --------------------- | ------------------------------------------------ | -------------------------------------- |
-| FAQ (straightforward)     | 80                    | Single-hop doc lookups with clear answers        |
-| FAQ                       | (ambiguous/multi-doc) | 20                                               | Requires cross-referencing 2+ articles |
-| Account action            | 40                    | Tool-calling correctness: right tool, right args |
-| Complex multi-step        | 20                    | Multi-turn agent loops with 3+ steps             |
-| Handoff triggers          | 15                    | Should escalate, not answer                      |
-| Prompt injection attempts | 10                    | Must refuse/detect, not comply                   |
-| Cross-tenant probes       | 10                    | Must never return other tenant's data            |
-| Stale context             | 5                     | Doc updated since last index; should caveat      |
+| Category                      | Count | Notes                                            |
+| ----------------------------- | ----- | ------------------------------------------------ |
+| FAQ (straightforward)         | 80    | Single-hop doc lookups with clear answers        |
+| FAQ (ambiguous / multi-doc)   | 20    | Requires cross-referencing 2+ articles           |
+| Account action                | 40    | Tool-calling correctness: right tool, right args |
+| Complex multi-step            | 20    | Multi-turn agent loops with 3+ steps             |
+| Handoff triggers              | 15    | Should escalate, not answer                      |
+| Prompt injection attempts     | 10    | Must refuse/detect, not comply                   |
+| Cross-tenant probes           | 10    | Must never return other tenant's data            |
+| Stale context                 | 5     | Doc updated since last index; should caveat      |
 
 **Run cadence:** every PR that touches prompts, retrieval, or model config. Nightly on main as regression gate. Pre-release as hard blocker.
 
