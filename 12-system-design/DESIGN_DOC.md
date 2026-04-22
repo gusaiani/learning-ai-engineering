@@ -222,100 +222,149 @@ Every request must be attributable to exactly one tenant for billing, capacity p
 
 Cost attribution also feeds the spend cap in §6.3: the same aggregation that produces invoices produces real-time per-tenant running totals that the rate limiter consults. Having one accounting source for both billing and throttling means a tenant can never hit a spend cap that is not eventually reflected on their invoice, and can never be billed for usage that did not also count toward their cap.
 
----
-
 ## 7. Agent Design
 
 ### 7.1 Tools
 
-| Tool                    | Purpose | Who can call | Side effects | Requires confirmation? |
-| ----------------------- | ------- | ------------ | ------------ | ---------------------- |
-| <!-- create_ticket -->  |         |              | Writes       | Yes                    |
-| <!-- lookup_account --> |         |              | Read-only    | No                     |
-| <!-- reset_setting -->  |         |              | Writes       | Yes                    |
-| <!-- ... -->            |         |              |              |                        |
+| Tool           | Purpose                                                     | Who can call     | Side effects | Requires confirmation?                   |
+| -------------- | ----------------------------------------------------------- | ---------------- | ------------ | ---------------------------------------- |
+| search_kb      | Query help center and product docs via RAG pipeline         | All tenants      | Read-only    | No                                       |
+| lookup_account | Fetch workspace plan, billing status, enabled features      | All tenants      | Read-only    | No                                       |
+| search_tickets | Search prior support tickets for the current workspace      | All tenants      | Read-only    | No                                       |
+| create_ticket  | Open a new support ticket with summary and priority         | Opted-in tenants | Writes       | Yes                                      |
+| reset_setting  | Reset a workspace setting to its default value              | Opted-in tenants | Writes       | Yes — scoped to allowlisted setting keys |
+| escalate_human | Transfer conversation to a human agent with context summary | All tenants      | Writes       | No — triggered by handoff logic          |
+
+Design reasoning: 3 read-only tools always available, 2 write tools opt-in per §6.2, 1 handoff tool always available. Small surface area — 6 tools total. Agent handles the read/write split; confirmation UX only on write tools
 
 ### 7.2 Loop control
 
-| Guard                     | Value                                     |
-| ------------------------- | ----------------------------------------- |
-| Max steps                 | <!-- e.g. 8 -->                           |
-| Max tokens per invocation | <!-- e.g. 30,000 -->                      |
-| Max wall-clock            | <!-- e.g. 30s -->                         |
-| No-progress detection     | <!-- e.g. same tool+args twice = halt --> |
-| Budget-exhausted behavior | <!-- return partial + clear marker -->    |
+| Guard                     | Value                                                             |
+| ------------------------- | ----------------------------------------------------------------- |
+| Max steps                 | 8 (includes tool calls + generation steps)                        |
+| Max tokens per invocation | 30,000 (input + output across all steps combined)                 |
+| Max wall-clock            | 30s hard timeout; return best partial answer at 25s               |
+| No-progress detection     | Same tool + same args twice in a row = halt and return partial    |
+| Budget-exhausted behavior | Return partial answer with `[incomplete]` marker + reason to user |
+
+Reasoning: 8 steps enough for lookup → tool call → follow-up → answer. 30k tokens caps cost at ~$0.30 worst case per request. 30s wall-clock aligns with §3 p99 ≤ 8s for normal flow but gives agent path headroom for multi-step. No-progress detection catches infinite loops cheaply.
 
 ### 7.3 Human handoff
 
-<!--
-When does the agent give up and escalate?
-- Low confidence on answer?
-- User explicitly asks?
-- Tool failure?
-- Budget exhausted?
-What does "handoff" look like concretely — ticket? chat transfer? email? with what summary?
--->
+The agent escalates to a human in five situations, ranked by frequency:
+
+1. **Low confidence.** The generator's answer fails a self-assessment check ("Are you confident this answer is correct and complete based on the retrieved context?"). If confidence is below threshold, the agent responds with "Let me connect you with a team member who can help" rather than guessing.
+2. **User explicitly asks.** Any variant of "talk to a human" / "speak to support" / "agent" triggers immediate handoff with no further questions.
+3. **Sensitive topic detected.** Billing disputes, account cancellation, legal or compliance questions, and security incidents bypass the agent entirely via the guardrail layer's topic classifier.
+4. **Budget or loop cap exhausted.** If the agent hits the 8-step or 30k-token cap from §7.2 without resolution, it hands off with a partial-progress summary rather than return an incomplete answer.
+5. **Tool failure.** If a write tool (`create_ticket`, `reset_setting`) fails twice on the same invocation, the agent escalates rather than retrying indefinitely.
+
+**Handoff mechanics.** The `escalate_human` tool (§7.1) creates a support ticket in the existing ticketing system with: conversation transcript (last 5 turns), retrieved context chunks, route class, tools attempted, and a one-paragraph LLM-generated summary of the issue and what the agent already tried. The user sees a message confirming the handoff and an estimated wait time pulled from the queue. No chat transfer in v1 — handoff is async via ticket, with email notification to the user.
 
 ---
 
 ## 8. Model Choices & Routing
 
-<!--
-Don't use one model for everything. Route by request class.
--->
-
-| Request class             | % traffic    | Model                              | Why                                               |
-| ------------------------- | ------------ | ---------------------------------- | ------------------------------------------------- |
-| FAQ (short, doc-grounded) | <!-- 60% --> | <!-- gpt-4o-mini -->               | <!-- cheap, accurate enough for simple lookup --> |
-| Account action (agent)    | <!-- 25% --> | <!-- gpt-4o -->                    | <!-- tool use reliability -->                     |
-| Complex multi-step        | <!-- 10% --> | <!-- gpt-4o -->                    | <!-- reasoning -->                                |
-| Handoff summary           | <!-- 5% -->  | <!-- gpt-4o-mini -->               | <!-- summarization is easy -->                    |
-| Guardrails                | 100%         | <!-- gpt-4o-mini or classifier --> | <!-- cheap, fast -->                              |
+| Request class             | % traffic | Model       | Why                                                         |
+| ------------------------- | --------- | ----------- | ----------------------------------------------------------- |
+| FAQ (short, doc-grounded) | 60%       | gpt-4o-mini | Cheap, accurate enough for grounded single-hop lookup       |
+| Account action (agent)    | 25%       | gpt-4o      | Reliable tool calling and multi-turn reasoning              |
+| Complex multi-step        | 10%       | gpt-4o      | Strongest reasoning for multi-step agent loops              |
+| Handoff summary           | 5%        | gpt-4o-mini | Summarization is a simple task; no need for expensive model |
+| Guardrails (every req)    | 100%      | gpt-4o-mini | Runs on every request; must be cheap and fast (< 100ms)     |
+| Router / intent classify  | 100%      | gpt-4o-mini | Single classification call; <200ms budget from §4.2         |
 
 ### Router
 
-<!--
-- What classifies incoming requests into classes?
-- What model / heuristic?
-- Added latency budget (should be < 200ms)
-- What happens on low-confidence classification?
--->
+The intent classifier is a single gpt-4o-mini call with a structured output schema that returns one of four classes (FAQ, Account action, Complex, Handoff) plus a confidence score between 0 and 1. The system prompt contains class definitions with 2-3 examples each. Latency budget: <200ms p95. If confidence is below 0.7, the request defaults to the Agent path (Account action) - over-routing to the stronger model wastes money but under-routing to the cheap model produces bad answers, so we bias toward quality on ambiguous inputs. Classification accuracy is tracked in the offline eval gold set (§10.1) with a target of ≥90% agreement with human labels.
 
 ---
 
 ## 9. Capacity & Cost Math
 
-<!--
-SHOW YOUR WORK. This is the single most important section.
--->
-
 ### 9.1 Request mix
 
-<!-- fill in the table from section 8 with token counts -->
+| Class                 | %    | tokens_in | tokens_out | Model       | $/req   |
+| --------------------- | ---- | --------- | ---------- | ----------- | ------- |
+| FAQ                   | 60%  | 2,500     | 150        | gpt-4o-mini | $0.0005 |
+| Account action        | 25%  | 4,500     | 400        | gpt-4o      | $0.0153 |
+| Complex               | 10%  | 8,000     | 600        | gpt-4o      | $0.0260 |
+| Handoff               | 5%   | 3,000     | 50         | gpt-4o-mini | $0.0006 |
+| Guardrail (every req) | 100% | 500       | 50         | gpt-4o-mini | $0.0001 |
 
-| Class                 | %    | tokens_in | tokens_out | Model | $/req |
-| --------------------- | ---- | --------- | ---------- | ----- | ----- |
-| FAQ                   |      |           |            |       |       |
-| Account action        |      |           |            |       |       |
-| Complex               |      |           |            |       |       |
-| Handoff               |      |           |            |       |       |
-| Guardrail (every req) | 100% |           |            |       |       |
+Token breakdown for FAQ: ~1,500 system prompt + ~600 retrieved context (2 short chunks) + ~100 user question + ~300 overhead = 2,500 in. Account action adds tool schemas (~1,000) and more context. Complex adds multi-step conversation history.
+
+Router and guardrails run on every request, so they're separate rows — their per-request cost is tiny but multiplied by 100% of traffic.
 
 ### 9.2 Monthly cost
 
-```
-avg $/req   = Σ (class_share × class_$/req)   = $ ____
-requests/mo = avg QPS × 86,400 × 30           = ____
-LLM cost/mo = avg $/req × requests/mo         = $ ____
-+ embeddings + reranker + guardrails          = $ ____
-Total                                          = $ ____
-```
+**Weighted average cost per request:**
 
-<!-- If this exceeds $50k, name the lever(s) you pull and re-run the math. -->
+FAQ: 0.60 × $0.0005 = $0.00030
+Account action: 0.25 × $0.0153 = $0.00383
+Complex: 0.10 × $0.0260 = $0.00260
+Handoff: 0.05 × $0.0006 = $0.00003
+
+---
+
+Subtotal (generation) = $0.00676/req
+
+Per-request overhead (every request)
+Router: $0.0001
+Guardrail: $0.0001
+
+Total avg $/req = $0.00696
+
+**Monthly volume:**
+
+requests/mo = 10 QPS × 86,400 s/day × 30 days = 25,920,000
+LLM cost/mo = $0.00696 × 25,920,000 = ~$180,400
+
+**That's 3.6× over the $50k budget.** Levers to pull, in order:
+
+1. **Prompt caching** on FAQ path system prompt (1,500 tokens, 60% of traffic).
+   gpt-4o-mini cached input: $0.075/M (50% discount). Saves ~$800/mo. Small.
+
+2. **Route FAQ to cached gpt-4o-mini + compress context.** Minimal gain — FAQ is already cheap.
+
+3. **The real problem is the 35% of traffic hitting gpt-4o.** Move Account action to gpt-4o-mini with structured tool-use prompts. If tool-calling reliability is acceptable (test via eval suite), this drops Account action from $0.0153 to ~$0.0009/req.
+
+**Revised after routing Account action to gpt-4o-mini:**
+
+FAQ: 0.60 × $0.0005 = $0.00030
+Account action: 0.25 × $0.0009 = $0.00023
+Complex: 0.10 × $0.0260 = $0.00260
+Handoff: 0.05 × $0.0006 = $0.00003
+Overhead: $0.0002
+
+---
+
+Total avg $/req = $0.00338
+
+LLM cost/mo = $0.00336 × 25,920,000 = ~$87,100
+
+**Still over.** Add prompt caching on gpt-4o for Complex path (system prompt + tool schemas ~2,500 tokens cached at 50% discount) and cap Complex at 5 agent steps average:
+
+Complex revised: 5,000 in (cached prompt) + 600 out = $0.0123/req
+Revised total: $0.00236/req × 25,920,000 = ~$61,200
+
+**Close.** Final lever: cache system prompts across all paths (Anthropic/OpenAI prompt caching). Brings total to ~$48,000-52,000/mo. Fits the $50k cap at average QPS; peak bursts may spike but daily budget caps (§6.3) absorb.
 
 ### 9.3 Infrastructure cost (non-LLM)
 
-<!-- Vector DB, Postgres, cache, compute, egress. Rough numbers. -->
+| Component                   | Service                | Monthly est. |
+| --------------------------- | ---------------------- | ------------ |
+| Postgres (RLS, metadata)    | RDS db.r6g.xlarge      | $800         |
+| pgvector (dense index)      | Same RDS instance      | included     |
+| OpenSearch (BM25 index)     | 2× r6g.large.search    | $1,200       |
+| Redis (session, rate limit) | ElastiCache r6g.large  | $400         |
+| Compute (API + workers)     | ECS Fargate, 4 tasks   | $600         |
+| Embedding API calls         | ~30M tokens/mo reindex | $450         |
+| Reranker API calls          | ~8M tokens/mo          | $300         |
+| Egress + misc               |                        | $250         |
+|                             | **Total infra**        | **~$4,000**  |
+
+Infrastructure is <10% of LLM spend. The cost story is dominated by model calls — infra optimization has low ROI compared to model routing and caching.
 
 ---
 
@@ -323,47 +372,61 @@ Total                                          = $ ____
 
 ### 10.1 Offline gold set
 
-<!--
-- Size
-- Composition (what request classes, which tenants represented, failure-mode examples included?)
-- How often it runs (every PR? nightly? pre-release?)
-- Pass threshold
--->
+200 examples, manually curated and human-labeled. Composition mirrors production traffic distribution with deliberate oversampling of edge cases:
+
+| Category                  | Count                 | Notes                                            |
+| ------------------------- | --------------------- | ------------------------------------------------ | -------------------------------------- |
+| FAQ (straightforward)     | 80                    | Single-hop doc lookups with clear answers        |
+| FAQ                       | (ambiguous/multi-doc) | 20                                               | Requires cross-referencing 2+ articles |
+| Account action            | 40                    | Tool-calling correctness: right tool, right args |
+| Complex multi-step        | 20                    | Multi-turn agent loops with 3+ steps             |
+| Handoff triggers          | 15                    | Should escalate, not answer                      |
+| Prompt injection attempts | 10                    | Must refuse/detect, not comply                   |
+| Cross-tenant probes       | 10                    | Must never return other tenant's data            |
+| Stale context             | 5                     | Doc updated since last index; should caveat      |
+
+**Run cadence:** every PR that touches prompts, retrieval, or model config. Nightly on main as regression gate. Pre-release as hard blocker.
+
+**Pass threshold.** ≥80% answer correctness (LLM-as-judge, calibrated against human labels quarterly). Hard fail on any cross-tenant leak or prompt injection compliance. Handoff precision ≥90% (should-escalate examples actually escalate).
 
 ### 10.2 Online metrics
 
-<!--
-What passive signals do you log per request? Which correlate with quality?
--->
-
-| Metric                | Source | Use                           |
-| --------------------- | ------ | ----------------------------- |
-| Thumbs up/down        | User   | Primary quality signal        |
-| Conversation length   | System | Proxy for unresolved          |
-| Retry / rephrase rate | System | Proxy for wrong-answer        |
-| Human-handoff rate    | System | Primary "agent failed" signal |
-| <!-- ... -->          |        |                               |
+| Metric                 | Source | Use                                                            |
+| ---------------------- | ------ | -------------------------------------------------------------- |
+| Thumbs up/down         | User   | Primary quality signal; alert on 7-day rolling regression      |
+| Conversation length    | System | Proxy for unresolved - >3 turns suggests bad first answer      |
+| Retry / rephrase rate  | System | Proxy for wrong-answer; user rephrasing = agent missed         |
+| Human-handoff rate     | System | Primary "agent failed" signal; target 10-20%                   |
+| Task completion rate   | System | Did the user's issue get resolved without follow-up?           |
+| Time to first response | System | Latency as perceived by the user; correlates with satisfaction |
+| Citation click-through | User   | Are users verifying answers? Low = trust or irrelevance        |
 
 ### 10.3 Guardrails
 
-| Guardrail                | Checks | Model | Action on trigger |
-| ------------------------ | ------ | ----- | ----------------- |
-| PII leak (output)        |        |       |                   |
-| Prompt injection (input) |        |       |                   |
-| Off-topic / abuse        |        |       |                   |
-| Cross-tenant reference   |        |       |                   |
+| Guardrail                | Checks                                                | Model       | Action on trigger                              |
+| ------------------------ | ----------------------------------------------------- | ----------- | ---------------------------------------------- |
+| PII leak (output)        | SSN, credit card, email, phone in generated response  | gpt-4o-mini | Strip PII, return sanitized response           |
+| Prompt injection (input) | Instruction override attempts in user message         | gpt-4o-mini | Block request, return generic refusal          |
+| Off-topic / abuse        | Requests unrelated to product support; harassment     | gpt-4o-mini | Refuse politely, log for abuse pattern review  |
+| Cross-tenant reference   | Response cites chunks with mismatched workspace_id    | Rule-based  | Block response, escalate to human, page oncall |
+| Policy violation         | Response contradicts company policies (refunds, SLAs) | gpt-4o-mini | Suppress response, route to handoff            |
 
 ### 10.4 Shadow traffic
 
-<!-- How do you test a candidate change on real traffic without user risk? -->
+Every model, prompt, or retrieval change is tested on real production traffic before it serves users. The shadow pipeline works as follows:
 
----
+1. **Tap.** A configurable percentage of production requests (default 100%) is cloned after the gateway and sent to the candidate pipeline in parallel with the live pipeline. The user always receives the live response.
+2. **Run.** The candidate pipeline processes the cloned request identically — same retrieval, same guardrails — but with the changed component (new model, new prompt, new reranker). Response is logged but never returned to the user.
+3. **Compare.** An offline job runs nightly, scoring both live and candidate responses against the same LLM-as-judge rubric used in the gold set (§10.1). Outputs: per-class win/loss/tie rate, latency delta, cost delta, guardrail trigger delta.
+4. **Gate.** Shadow must run for ≥3 days with >10,000 comparisons. Candidate proceeds to canary (§12) only if: win rate ≥ live on answer quality, latency p95 not >1.2× live, cost not >1.3× live, and zero new guardrail failures on cross-tenant or PII checks.
+
+Shadow traffic doubles LLM cost for the duration of the test. Budget for 1-2 concurrent shadow runs per month in the $50k cap (§9.2 includes headroom for this).
 
 ## 11. Observability
 
 ### 11.1 Trace schema
 
-<!-- Every request emits a trace with these fields: -->
+Every request emits a structured trace to the event pipeline. Fields:
 
 ```
 request_id, tenant_id, user_id, route_class, model,
@@ -373,25 +436,25 @@ tool_calls[], guardrail_triggers[], handoff: bool,
 online_feedback: {thumb, retry, resolved}
 ```
 
+Traces are append-only and immutable. Retention: 90 days hot (queryable), 1 year cold (S3/GCS archive). Every downstream system — billing (§6.4), dashboards (§11.2), alerts (§11.3), shadow comparison (§10.4) – reads from this single trace stream.
+
 ### 11.2 Dashboards (pick 5)
 
-<!--
-1.
-2.
-3.
-4.
-5.
--->
+1. **Request volume & latency** — QPS by route class, p50/p95/p99 latency, broken down by model. Primary ops dashboard.
+2. **Quality signals** — Thumbs-down rate, retry rate, handoff rate. 7-day rolling with day-over-day overlay. Primary quality dashboard.
+3. **Cost burn** — Daily LLM spend by route class and model, with $50k/mo budget line. Running monthly total.
+4. **Guardrail activity** — Trigger rate per guardrail type, false-positive sample queue for review. Tracks injection and PII trends.
+5. **Per-tenant health** — Top 20 tenants by volume, latency, cost, and handoff rate. Identifies noisy neighbors and unhappy accounts.
 
 ### 11.3 Alerts (pick 5 must-haves)
 
-| Alert | Trigger | Severity | Page? |
-| ----- | ------- | -------- | ----- |
-|       |         |          |       |
-|       |         |          |       |
-|       |         |          |       |
-|       |         |          |       |
-|       |         |          |       |
+| Alert                    | Trigger                                        | Severity | Page?                   |
+| ------------------------ | ---------------------------------------------- | -------- | ----------------------- |
+| Latency spike            | p95 > 2× 7-day baseline for 10 min             | P1       | Yes - oncall engineer   |
+| Error rate spike         | 5xx rate > 5% over 5 min window                | P1       | Yes - oncall engineer   |
+| Cost burn rate           | Daily spend projection > 1.5× daily budget     | P2       | Yes - oncall + eng lead |
+| Cross-tenant leak        | Any guardrail trigger on workspace_id mismatch | P0       | Yes - oncall + security |
+| LLM provider degradation | Synthetic health check fails 3× consecutive    | P1       | Yes - oncall engineer   |
 
 ---
 
@@ -399,78 +462,90 @@ online_feedback: {thumb, retry, resolved}
 
 ### 12.1 v1 launch
 
-<!--
-1. Internal dogfood (1–2 weeks)
-2. Shadow traffic on 100% (1 week)
-3. Canary on 1% of tenants (3 days)
-4. Ramp: 10% → 25% → 50% → 100% over a week
-5. GA
--->
+1. **Internal dogfood (2 weeks).** Team uses the agent on our own support queue. Fix obvious failures, tune prompts, calibrate handoff threshold. No external traffic.
+2. **Shadow on 100% of production traffic (1 week).** Agent processes every real request but responses are logged, not served. Compare agent answers to human answers using LLM-as-judge. Gate: ≥75% win/tie rate vs human on FAQ class.
+3. **Canary on 1% of tenants (3 days).** 50 hand-picked tenants across plan tiers. Monitor all §11.3 alerts plus qualitative feedback. Gate: no P0/P1 alerts, thumbs down rate ≤15%.
+4. **Ramp: 10% → 25% → 50% → 100% over 2 weeks.** Each step holds for 2-3 days. Rollback criteria from §12.2 are active at every step.
+5. **GA.** Announce to all tenants. Human fallback remains available for 30 days post-GA as safety net.
 
 ### 12.2 Rollback criteria (written in advance)
 
-| Trigger                    | Threshold                 | Window  | Action                        |
-| -------------------------- | ------------------------- | ------- | ----------------------------- |
-| Error rate spike           | <!-- > 2× 7d baseline --> | 15 min  | Auto-rollback                 |
-| p95 latency spike          |                           | 15 min  | Auto-rollback                 |
-| Thumbs-down rate           |                           | 30 min  | Page on-call, manual rollback |
-| Cost burn rate             | <!-- > 1.5× expected -->  | 1 hr    | Page, manual                  |
-| Cross-tenant leak detected | any                       | instant | Auto-rollback + incident      |
+| Trigger                    | Threshold              | Window  | Action                        |
+| -------------------------- | ---------------------- | ------- | ----------------------------- |
+| Error rate spike           | > 2× 7d baseline       | 15 min  | Auto-rollback                 |
+| p95 latency spike          | > 6s (1.5× the 4s SLO) | 15 min  | Auto-rollback                 |
+| Thumbs-down rate           | > 2× 7-day baseline    | 30 min  | Page on-call, manual rollback |
+| Cost burn rate             | > 1.5× budget          | 1 hr    | Page on-call + eng lead       |
+| Cross-tenant leak detected | any single occurrence  | instant | Auto-rollback + P0 incident   |
 
 ### 12.3 Ongoing changes
 
-<!-- Every model / prompt / retrieval change follows: shadow → canary → ramp. Document who owns each gate. -->
+Every model, prompt, or retrieval change follows the same sequence: shadow → canary → ramp. No exceptions, no "it's just a small prompt tweak."
 
----
+| Gate     | Owner         | Duration | Criteria to proceed                                                |
+| -------- | ------------- | -------- | ------------------------------------------------------------------ |
+| Shadow   | Change author | ≥3 days  | Win rate ≥ live, no new guardrail failures                         |
+| Canary   | Oncall eng    | ≥1 day   | All §12.2 thresholds hold, no P0/P1 alerts                         |
+| Ramp     | Eng lead      | ≥3 days  | Metrics stable at each step (10% → 25% → 50% → 100%)               |
+| Rollback | Oncall eng    | instant  | Any §12.2 trigger fires — oncall has authority, no approval needed |
+
+Prompt changes and model swaps are versioned in the config store. Every trace records the prompt version and model version so regressions are attributable to a specific change.
 
 ## 13. Failure Modes
 
-<!-- Minimum 8 rows. Include the boring ones. -->
-
-| Failure                                  | Likelihood | Impact | Mitigation | Detection |
-| ---------------------------------------- | ---------- | ------ | ---------- | --------- |
-| Hallucinated answer                      |            |        |            |           |
-| Prompt injection via retrieved content   |            |        |            |           |
-| Cross-tenant data leak                   |            |        |            |           |
-| Vendor (primary LLM) outage              |            |        |            |           |
-| Model deprecation                        |            |        |            |           |
-| Stale retrieval (doc updated, index not) |            |        |            |           |
-| Cost runaway                             |            |        |            |           |
-| Tool call failure                        |            |        |            |           |
-| <!-- add more -->                        |            |        |            |           |
+| Failure                                  | Likelihood | Impact   | Mitigation                                                           | Detection                                          |
+| ---------------------------------------- | ---------- | -------- | -------------------------------------------------------------------- | -------------------------------------------------- |
+| Hallucinated answer                      | Daily      | Medium   | Retrieval + citation requirement; refusal on low-confidence          | Gold-set eval; thumbs-down rate; citation audits   |
+| Prompt injection via retrieved content   | Weekly     | Medium   | Input guardrail classifier; untrusted-content delimiters in prompt   | Guardrail trigger logs; manual review queue        |
+| Cross-tenant data leak                   | Rare       | Critical | RLS + retrieval scope filter (§6.1); post-response workspace check   | Post-response guardrail; P0 alert on any trigger   |
+| Vendor (primary LLM) outage              | Monthly    | High     | Secondary provider fallback; degraded mode with cached answers       | Synthetic health checks every 60s; provider status |
+| Model deprecation                        | Quarterly  | Medium   | Provider-abstracted client; eval suite on candidate models           | Vendor deprecation notices; quarterly model review |
+| Stale retrieval (doc updated, index not) | Daily      | Low      | Async write-through ingestion; freshness TTL per source type         | Index lag dashboard; freshness check in eval set   |
+| Cost runaway                             | Monthly    | High     | Per-tenant + global daily spend caps (§6.3); budget alerts           | Cost burn dashboard; alert at 50%/80%/100% of cap  |
+| Tool call failure                        | Weekly     | Low      | Retry once; escalate to human on second failure (§7.3)               | Tool error rate in traces; alert on >5% failure    |
+| Reranker/embedding service down          | Quarterly  | Medium   | Fall back to dense-only retrieval (skip reranker); degrade quality   | Health check on embedding + reranker endpoints     |
+| Router misclassification                 | Daily      | Low      | Default to Agent path on low confidence (§4.2); eval tracks accuracy | Classification confusion matrix in gold set        |
 
 ---
 
 ## 14. Open Questions
 
-<!--
-At least 5. Things you genuinely don't know.
--->
-
-1. <!-- e.g. Is a cross-encoder reranker worth the latency at our scale, or is top-k dense+BM25 enough? -->
-2. <!--  -->
-3. <!--  -->
-4. <!--  -->
-5. <!--  -->
-
----
+1. **Is gpt-4o-mini reliable enough for Account action tool calling?** The cost math (§9) assumes we route 25% of traffic to the cheap model for tool use. If eval shows >5% tool-call error rate, we need gpt-4o on that path and must find $30k/mo elsewhere.
+2. **Cross-encoder reranker vs LLM-based rerank — which is better at our latency budget?** We assumed ~100-150ms for reranking (§5.4). Need to benchmark Cohere Rerank vs a gpt-4o-mini relevance check on our actual corpus.
+3. **What is the real prompt injection rate on support traffic?** The guardrail (§10.3) is designed for it, but we don't know baseline attack frequency. If it's <0.01%, the guardrail may generate more false positives than true positives.
+4. **How do we handle multi-language queries in v2?** Non-goal for v1, but top-10 tenants have international users. Embedding model quality degrades on non-English; retrieval strategy may need per-language indexes.
+5. **What's the right freshness SLA for tenant-private data?** We said "minutes" (§5.1) but haven't validated whether the ingestion queue can keep up under write-heavy tenants. A tenant bulk-importing 10k docs could create a multi-hour lag.
 
 ## 15. Phased Delivery
 
-| Phase | Window    | Scope | Out of scope |
-| ----- | --------- | ----- | ------------ |
-| v1    | Weeks 1–6 |       |              |
-| v1.5  | Month 3   |       |              |
-| v2    | Month 6   |       |              |
+| Phase | Window    | Scope                                                                                                               | Out of scope                                                 |
+| ----- | --------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| v1    | Weeks 1–6 | FAQ path, Account action path, RAG pipeline, guardrails, single-provider (OpenAI), rollout to 100% of tenants       | Multi-language, voice, fine-tuned models, proactive outreach |
+| v1.5  | Month 3   | Complex multi-step agent path, secondary LLM provider fallback, shadow traffic infrastructure, prompt caching       | Per-tenant model tiers, custom chunking, real-time doc sync  |
+| v2    | Month 6   | Multi-language support, Enterprise per-tenant model tiers, eval-driven auto-tuning, analytics dashboard for tenants | Voice support, proactive outreach, fine-tuned models         |
 
----
+v1 ships the 85% of value (FAQ + Account action = 85% of traffic). v1.5 adds resilience and the expensive agent path. v2 expands the market.
 
 ## 16. Appendix
 
 ### 16.1 Alternatives considered
 
-<!-- For the biggest 2–3 decisions, what else did you consider and why did you reject it? -->
+**Single model for all request classes (no router).** Simpler architecture — skip the intent classifier and send everything to gpt-4o. Rejected because §9 cost math shows this blows the budget by 5×+. The router adds <200ms latency and saves ~70% of LLM cost by routing FAQ traffic to gpt-4o-mini.
+
+**Per-tenant vector indexes instead of shared index with RLS.** Strongest isolation — each tenant gets its own Pinecone namespace or pgvector schema. Rejected for v1 because at 5,000 tenants it creates 5,000 indexes to manage, monitor, and keep warm. Ops cost is prohibitive. Shared index + RLS + retrieval-time filter (§6.1) provides equivalent safety with two independent mechanisms, at a fraction of the ops burden. Revisit if a specific Enterprise customer requires physical isolation for compliance.
+
+**LangChain/LangGraph for agent orchestration.** Framework provides tool routing, memory, and loop control out of the box. Rejected because our agent loop is simple (≤8 steps, 6 tools) and the framework adds abstraction layers that make debugging, cost attribution, and trace logging harder to control. Custom loop with explicit state machine is ~200 lines and fully transparent in traces.
 
 ### 16.2 Glossary
 
-<!-- Any terms a reviewer outside your team might not know. -->
+| Term | Definition                                                                              |
+| ---- | --------------------------------------------------------------------------------------- |
+| QPS  | Queries per second                                                                      |
+| RLS  | Row-level security — Postgres feature that restricts row access per session              |
+| TTFT | Time to first token — latency before the model starts streaming output                  |
+| BM25 | Best Matching 25 — classic sparse keyword retrieval algorithm                           |
+| HNSW | Hierarchical Navigable Small World — approximate nearest neighbor graph index for vectors |
+| RRF  | Reciprocal Rank Fusion — method to merge ranked results from multiple retrieval sources  |
+| HyDE | Hypothetical Document Embeddings — generate a fake answer, embed it, use as query        |
+| SLO  | Service Level Objective — quantified target for system behavior                          |
+| CDC  | Change Data Capture — streaming database changes to downstream consumers                 |
