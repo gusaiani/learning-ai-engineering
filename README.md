@@ -79,3 +79,13 @@ After Module 6, you are already hirable for a mid-level role. After Module 10, s
 
 ---
 
+## Next Steps
+
+- Python proficiency with NumPy, Pandas & PyTorch/TensorFlow
+- Data preprocessing, feature engineering & EDA
+- Model evaluation, cross-validation & bias-variance tradeoff
+- Transformers, attention mechanisms & LLMs
+- Prompt engineering, RAG & fine-tuning techniques
+- Vector databases & embeddings (Pinecone, FAISS, Chroma)
+- MLOps – experiment tracking, model serving, monitoring (MLflow, BentoML, LangChain)
+- Evaluation metrics, hallucination detection & safety/alignment

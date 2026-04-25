@@ -20,14 +20,6 @@ openai_client = OpenAI()
 CHROMA_PATH = Path(__file__).parent / ".chroma_db"
 chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 
-# TODO 1: Initialize Langfuse for observability.
-#
-# Import Langfuse from langfuse and create an instance.
-# If LANGFUSE_PUBLIC_KEY isn't set in the environment, set langfuse_client = None
-# so the rest of the app works without tracing.
-#
-# When it IS configured, also import the @observe decorator from langfuse.decorators
-# — you'll use it in knowledge.py and agents.py to trace function calls.
 try:
     from langfuse import Langfuse
     from langfuse.decorators import observe

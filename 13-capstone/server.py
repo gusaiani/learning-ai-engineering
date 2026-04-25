@@ -86,68 +86,95 @@ async def chat_stream(req: ChatRequest):
       event: done     — request complete, includes cost/usage
       event: error    — something went wrong
     """
-    # TODO 1: Implement streaming SSE endpoint.
-    #
-    # 1. Record start time
-    # 2. Create a sync generator from run_support_agent(req.message, req.customer_id, req.image_path)
-    # 3. Write an async generator that:
-    #    a. Iterates over AgentEvent objects
-    #    b. Formats each as SSE: f"event: {event.type}\ndata: {json.dumps(event.data)}\n\n"
-    #    c. On "done" event, update _metrics (total_requests, total_latency_ms, total_cost)
-    #    d. On "error" event, increment _metrics["total_errors"]
-    # 4. Return StreamingResponse(generator, media_type="text/event-stream")
-    #
-    # Note: run_support_agent returns a sync generator. You can iterate it
-    # in an async generator with a regular for loop (FastAPI handles threading).
-    raise NotImplementedError
+    start = time.time()
+
+    async def event_generator():
+        for event in run_support_agent(req.message, req.customer_id, req.image_path):
+            if event.type == "done":
+                latency_ms = (time.time() - start) * 1000
+                _metrics["total_requests"] += 1
+                _metrics["total_latency_ms"] += latency_ms
+            elif event.type == "error":
+                _metrics["total_errors"] += 1
+
+            yield f"event: {event.type}\ndata: {json.dumps(event.data)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/chat/sync", response_model=ChatResponse)
 async def chat_sync(req: ChatRequest):
     """Non-streaming chat. Collects all events and returns a single response."""
-    # TODO 2: Implement non-streaming endpoint.
-    #
-    # 1. Record start time
-    # 2. Iterate over run_support_agent() events, collecting:
-    #    - All "token" events → concatenate into response string
-    #    - All "status" events with tool info → collect tool names
-    #    - "status" event with "route" → save as routing info
-    #    - "done" event → extract cost
-    # 3. Calculate latency
-    # 4. Update _metrics
-    # 5. Return ChatResponse(...)
-    raise NotImplementedError
+    start = time.time()
 
+    response_parts = []
+    tools_called = []
+    routing = {}
+    cost = 0.0
+
+    for event in run_support_agent(req.message, req.customer_id, req.image_path):
+        if event.type == "token":
+            response_parts.append(event.data["content"])
+        elif event.type == "status":
+            if "tool" in event.data and event.data.get("status") == "calling":
+                tools_called.append(event.data["tool"])
+            if "route" in event.data:
+                routing = event.data
+        elif event.type == "error":
+            _metrics["total_errors"] += 1
+            raise HTTPException(status_code=500, detail=event.data["message"])
+
+    latency_ms = (time.time() - start) * 1000
+    _metrics["total_requests"] += 1
+    _metrics["total_latency_ms"] += latency_ms
+    _metrics["total_cost"] += cost
+
+    return ChatResponse(
+        response="".join(response_parts),
+        routing=routing,
+        tools_called=tools_called,
+        cost=cost,
+        latency_ms=round(latency_ms, 1),
+    )
 
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest(req: IngestRequest):
     """Ingest a document or directory into the knowledge base."""
-    # TODO 3: Detect if req.path is a file or directory.
-    # Call ingest_file() or ingest_directory() accordingly.
-    # Return IngestResponse with the results.
-    # Raise HTTPException(404) if the path doesn't exist.
-    raise NotImplementedError
+    path = Path(req.path)
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Path not found: {req.path}")
+
+    if path.is_dir():
+        results = ingest_directory(path)
+    else:
+        results = [ingest_file(path)]
+
+    return IngestResponse(results=results)
 
 
 @app.get("/knowledge")
 async def knowledge():
     """List knowledge base contents."""
-    # TODO 4: Call list_documents() and return the result.
-    raise NotImplementedError
+    return list_documents()
 
 
 @app.get("/metrics", response_model=MetricsResponse)
 async def metrics():
     """Operational metrics."""
-    # TODO 5: Calculate avg_latency and uptime, return MetricsResponse.
-    #
-    # avg_latency_ms = total_latency / total_requests (or 0 if no requests)
-    # uptime_seconds = time.time() - _start_time
-    raise NotImplementedError
+    total = _metrics["total_requests"]
+    avg_latency = _metrics["total_latency_ms"] / total if total else 0.0
+
+    return MetricsResponse(
+        total_requests=total,
+        avg_latency_ms=round(avg_latency, 1),
+        total_cost=_metrics["total_cost"],
+        total_errors=_metrics["total_errors"],
+        uptime_seconds=round(time.time() - _start_time, 1),
+    )
 
 
 @app.get("/health")
 async def health():
     """Health check."""
-    # TODO 6: Return {"status": "ok", "uptime_seconds": time.time() - _start_time}
-    raise NotImplementedError
+    return {"status": "ok", "uptime_seconds": round(time.time() - _start_time, 1)}

@@ -10,6 +10,7 @@ so the server can convert them to SSE.
 import base64
 import json
 import mimetypes
+from pathlib import Path
 from typing import Generator, Literal
 
 from pydantic import BaseModel
@@ -226,7 +227,7 @@ def _tool_search_kb(args: dict) -> dict:
 
 def _tool_lookup_customer(args: dict) -> dict:
     """Look up customer from mock data."""
-    customers = MOCK_CUSTOMERS.get(args["customer_id"])
+    customer = MOCK_CUSTOMERS.get(args["customer_id"])
     if customer is None:
         return {"error": "Customer not found"}
     return customer
@@ -235,7 +236,7 @@ def _tool_lookup_customer(args: dict) -> dict:
 def _tool_lookup_order(args: dict) -> dict:
     """Look up order from mock data."""
     order = MOCK_ORDERS.get(args["order_id"])
-    if order in None:
+    if order is None:
         return {"error": "Order not found"}
     return order
 
@@ -419,16 +420,15 @@ def run_agent_loop(
 
 def route_query(message: str) -> RouteDecision:
     """Classify a customer message using structured output."""
-    # TODO 8: Call openai_client.beta.chat.completions.parse() with:
-    #   model=CHAT_MODEL
-    #   messages=[
-    #       {"role": "system", "content": ROUTER_PROMPT},
-    #       {"role": "user", "content": message},
-    #   ]
-    #   response_format=RouteDecision
-    #
-    # Return response.choices[0].message.parsed.
-    raise NotImplementedError
+    response = openai_client.beta.chat.completions.parse(
+        model=CHAT_MODEL,
+        messages=[
+            {"role": "system", "content": ROUTER_PROMPT},
+            {"role": "user", "content": message},
+        ],
+        response_format=RouteDecision,
+    )
+    return response.choices[0].message.parsed
 
 
 # ---------------------------------------------------------------------------
@@ -468,14 +468,16 @@ def run_support_agent(
 
     Yields AgentEvent objects for the server to convert to SSE.
     """
-    # TODO 9: Implement the full pipeline.
-    #
-    # 1. Route: decision = route_query(message)
-    # 2. Yield status event: {"route": decision.category, "confidence": decision.confidence}
-    # 3. Select specialist config from SPECIALISTS[decision.category]
-    # 4. Build the user message. Start with the customer's message.
-    #    If customer_id is provided, prepend: "[Customer ID: {customer_id}]\n"
-    #    If image_path is provided, append: "\n[Attached image: {image_path}]"
-    # 5. messages = [{"role": "user", "content": built_message}]
-    # 6. Yield all events from run_agent_loop(messages, specialist tools, specialist prompt)
-    raise NotImplementedError
+    decision = route_query(message)
+    yield AgentEvent(type="status", data={"route": decision.category, "confidence": decision.confidence})
+
+    specialist = SPECIALISTS[decision.category]
+
+    user_message = message
+    if customer_id:
+        user_message = f"[Customer ID: {customer_id}]\n" + user_message
+    if image_path:
+        user_message += f"\n[Attached image: {image_path}]"
+
+    messages = [{"role": "user", "content": user_message}]
+    yield from run_agent_loop(messages, specialist["tools"], specialist["prompt"])
