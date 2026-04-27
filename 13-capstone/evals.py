@@ -106,16 +106,25 @@ def eval_retrieval(query: str, expected_source: str, expected_content: str) -> d
 
     Returns: {"pass": bool, "top_source": str|None, "expected_source": str, "details": str}
     """
-    # TODO 1: Search with kb_search(query, top_k=5).
-    #
-    # Check if expected_source appears in any result's "source" field.
-    # Check if expected_content (case-insensitive) appears in any result's "text".
-    # A case passes if BOTH conditions are true.
-    #
-    # Return {"pass": bool, "top_source": results[0]["source"] if results else None,
-    #         "expected_source": expected_source, "details": "...explanation..."}
-    raise NotImplementedError
+    results = kb_search(query, top_k=5)
 
+    source_match = any(r["source"] == expected_source for r in results)
+    top_source = results[0]["source"] if results else None
+
+    content_match = any(
+        expected_content.lower() in r["text"].lower()
+        for r in results
+    )
+
+    passed = source_match and content_match
+    details = f"source_match={source_match}, content_match={content_match}"
+
+    return {
+        "pass": passed,
+        "top_source": top_source,
+        "expected_source": expected_source,
+        "details": details,
+    }
 
 def eval_routing(message: str, expected_category: str) -> dict:
     """Evaluate routing accuracy for a single message.
@@ -123,11 +132,16 @@ def eval_routing(message: str, expected_category: str) -> dict:
     Returns: {"pass": bool, "predicted": str, "expected": str,
               "confidence": float, "reasoning": str}
     """
-    # TODO 2: Call route_query(message).
-    # Compare decision.category to expected_category.
-    # Return pass/fail with details.
-    raise NotImplementedError
+    decision = route_query(message)
+    passed = decision.category == expected_category
 
+    return {
+        "pass": passed,
+        "predicted": decision.category,
+        "expected": expected_category,
+        "confidence": decision.confidence,
+        "reasoning": decision.reasoning,
+    }
 
 def eval_response(message: str, reference: str, grounding_doc: str) -> dict:
     """Evaluate response quality using LLM-as-judge.
@@ -138,31 +152,47 @@ def eval_response(message: str, reference: str, grounding_doc: str) -> dict:
     Returns: {"accuracy": int, "helpfulness": int, "grounded": bool,
               "hallucination": bool, "reasoning": str}
     """
-    # TODO 3: Two steps.
-    #
-    # Step A — get the agent's response:
-    #   Iterate over run_support_agent(message) events.
-    #   Concatenate all "token" events into a response string.
-    #
-    # Step B — judge the response:
-    #   Call openai_client.beta.chat.completions.parse() with:
-    #     model=CHAT_MODEL
-    #     messages=[
-    #       {"role": "system", "content": judge_prompt},
-    #       {"role": "user", "content": f"Customer: {message}\nAgent: {response}\nReference: {reference}\nSource doc: {grounding_doc}"},
-    #     ]
-    #     response_format=ResponseScore
-    #
-    #   The judge prompt should instruct the model to:
-    #     - Score accuracy 0-5 (does the response match the reference facts?)
-    #     - Score helpfulness 0-5 (would a customer find this useful?)
-    #     - Assess grounding (is the info from the knowledge base?)
-    #     - Detect hallucination (does it state things not in the docs?)
-    #
-    #   Return the ResponseScore fields as a dict.
-    raise NotImplementedError
+    response_parts = []
+    for event in run_support_agent(message):
+        if event.type == "token":
+            response_parts.append(event.data["content"])
 
+    response = "".join(response_parts)
 
+    judge_prompt = (
+        "You are evaluating an AI support agent's response to a customer message.\n"
+        "Score the response on these dimensions:\n"
+        "- accuracy (0-5): does it match the reference facts?\n"
+        "- helpfulness (0-5): would a customer find it useful?\n"
+        "- grounded (true/false): is all info traceable to the knowledge base?\n"
+        "- hallucination (true/false): does it state facts not in the docs?\n"
+        "Be strict. A response missing key info from the reference is not accurate."
+    )
+
+    judge_input = (
+        f"Customer: {message}\n"
+        f"Agent: {response}\n"
+        f"Reference: {reference}\n"
+        f"Source doc: {grounding_doc}"
+    )
+
+    judge_response = openai_client.beta.chat.completions.parse(
+        model=CHAT_MODEL,
+        messages=[
+            {"role": "system", "content": judge_prompt},
+            {"role": "user", "content": judge_input},
+        ],
+        response_format=ResponseScore,
+    )
+    score = judge_response.choices[0].message.parsed
+
+    return {
+        "accuracy": score.accuracy,
+        "helpfulness": score.helpfulness,
+        "grounded": score.grounded,
+        "hallucination": score.hallucination,
+        "reasoning": score.reasoning,
+    }
 # ---------------------------------------------------------------------------
 # Suite runner
 # ---------------------------------------------------------------------------
@@ -177,25 +207,63 @@ def run_eval_suite(categories: list[str] | None = None) -> dict:
 
     results = {}
 
-    # TODO 4: For each category in categories, run all cases and collect results.
-    #
-    # Retrieval:
-    #   Run eval_retrieval() for each case in RETRIEVAL_CASES.
-    #   Print each result (pass/fail, query, details).
-    #   Print summary: "RETRIEVAL: X/Y passed (Z%)"
-    #
-    # Routing:
-    #   Run eval_routing() for each case in ROUTING_CASES.
-    #   Print each result (pass/fail, message, predicted vs expected).
-    #   Print summary: "ROUTING: X/Y passed (Z%)"
-    #
-    # Response:
-    #   Run eval_response() for each case in RESPONSE_CASES.
-    #   Print each result (scores, reasoning).
-    #   Print summary: "RESPONSE: avg accuracy=X.X, avg helpfulness=X.X, hallucinations=N/M"
-    #
-    # Store all results in the results dict and return it.
-    raise NotImplementedError
+    if "retrieval" in categories:
+        print("RETRIEVAL")
+        print("-" * 60)
+        retrieval_results = []
+        for case in RETRIEVAL_CASES:
+            r = eval_retrieval(case["query"], case["expected_source"], case["expected_content"])
+            retrieval_results.append(r)
+            mark = "PASS" if r["pass"] else "FAIL"
+            print(f"  [{mark}] {case['query']}")
+            print(f"         {r['details']}")
+
+        passed = sum(1 for r in retrieval_results if r["pass"])
+        total = len(retrieval_results)
+        pct = 100 * passed / total if total else 0
+        print(f"RETRIEVAL: {passed}/{total} passed ({pct:.0f}%)")
+        print()
+        results["retrieval"] = retrieval_results
+
+    if "routing" in categories:
+        print("ROUTING")
+        print("-" * 60)
+        routing_results = []
+        for case in ROUTING_CASES:
+            r = eval_routing(case["message"], case["expected"])
+            routing_results.append(r)
+            mark = "PASS" if r["pass"] else "FAIL"
+            print(f"  [{mark}] {case['message']}")
+            print(f"         predicted={r['predicted']} expected={r['expected']} (conf={r['confidence']:.2f})")
+
+        passed = sum(1 for r in routing_results if r["pass"])
+        total = len(routing_results)
+        pct = 100 * passed / total if total else 0
+        print(f"ROUTING: {passed}/{total} passed ({pct:.0f}%)")
+        print()
+        results["routing"] = routing_results
+
+    if "response" in categories:
+        print("RESPONSE")
+        print("-" * 60)
+        response_results = []
+        for case in RESPONSE_CASES:
+            r = eval_response(case["message"], case["reference"], case["grounding_doc"])
+            response_results.append(r)
+            print(f"  {case['message']}")
+            print(f"    accuracy={r['accuracy']}/5 helpfulness={r['helpfulness']}/5  " f"grounded={r['grounded']} hallucination={r['hallucination']}")
+            print(f"    {r['reasoning']}")
+
+        total = len(response_results)
+        avg_acc = sum(r["accuracy"] for r in response_results) / total if total else 0
+        avg_help = sum(r["helpfulness"] for r in response_results) / total if total else 0
+        halluc = sum(1 for r in response_results if r["hallucination"])
+        print(f"RESPONSE: avg accuracy={avg_acc:.1f}  avg helpfulness={avg_help:.1f}  " f"hallucinations={halluc}/{total}")
+        print()
+        results["response"] = response_results
+
+    return results
+
 
 
 # ---------------------------------------------------------------------------
