@@ -15,7 +15,7 @@ from typing import Generator, Literal
 
 from pydantic import BaseModel
 
-from config import openai_client, CHAT_MODEL, VISION_MODEL, calculate_cost
+from config import openai_client, CHAT_MODEL, VISION_MODEL, calculate_cost, observe
 from knowledge import search as kb_search
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,7 @@ Guidelines:
 # ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
-
+@observe(name="run_agent_loop")
 def run_agent_loop(
     messages: list[dict],
     tools: list[dict],
@@ -359,6 +359,9 @@ def run_agent_loop(
     """
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
+    total_input_tokens = 0
+    total_output_tokens = 0
+
     for _ in range(10):
         try:
             response = openai_client.chat.completions.create(
@@ -366,6 +369,7 @@ def run_agent_loop(
                 messages=full_messages,
                 tools=tools,
                 stream=True,
+                stream_options={"include_usage": True},
             )
 
             content_parts = []
@@ -373,6 +377,11 @@ def run_agent_loop(
             role = None
 
             for chunk in response:
+                if chunk.usage:
+                    total_input_tokens += chunk.usage.prompt_tokens
+                    total_output_tokens += chunk.usage.completion_tokens
+                    continue
+
                 delta = chunk.choices[0].delta
 
                 if delta.role:
@@ -406,7 +415,16 @@ def run_agent_loop(
                     yield AgentEvent(type="status", data={"tool": name, "status": "done", "preview": result[:200]})
                     full_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
             else:
-                yield AgentEvent(type="done", data={"model": model})
+                cost = calculate_cost(model, total_input_tokens, total_output_tokens)
+                yield AgentEvent(
+                    type="done", 
+                    data={
+                        "model": model, 
+                        "input_tokens": total_input_tokens, 
+                        "output_tokens": total_output_tokens, 
+                        "cost": cost
+                    },
+                )
                 break
 
         except Exception as e:
@@ -417,7 +435,7 @@ def run_agent_loop(
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-
+@observe(name="route_query")
 def route_query(message: str) -> RouteDecision:
     """Classify a customer message using structured output."""
     response = openai_client.beta.chat.completions.parse(
@@ -458,7 +476,7 @@ SPECIALISTS = {
 # ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
-
+@observe(name="run_support_agent")
 def run_support_agent(
     message: str,
     customer_id: str | None = None,
