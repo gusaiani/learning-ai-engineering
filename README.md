@@ -22,7 +22,7 @@ A project-based course to go from zero to $200k+ AI Engineer, working remotely f
 | 10 | [Observability & LLMOps](./10-llmops/) | Tracing, cost tracking, latency, monitoring | Instrumented production app | ✅ |
 | 11 | [Multimodal — Vision & Audio](./11-multimodal/) | Image inputs, audio transcription, OCR | Document intelligence app | ✅ |
 | 12 | [System Design for AI](./12-system-design/) | Architecture, trade-offs, scalability | Design doc for a real system | ✅ |
-| 13 | [Capstone](./13-capstone/) | Everything | Ship a complete AI product | |
+| 13 | [Capstone](./13-capstone/) | Everything | Ship a complete AI product | ✅ |
 
 ---
 
