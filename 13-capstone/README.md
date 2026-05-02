@@ -257,6 +257,30 @@ You should see five `200`s and two `429`s. A different `customer_id` gets a sepa
 
 In production you'd swap the in-memory `_BUCKETS` dict for Redis (so multiple server instances share state) and likely add a tier system — paid customers get higher `CAPACITY`, free tier gets stricter limits.
 
+### Semantic cache
+
+The same questions repeat constantly across customers: "how much is the Pro plan?", "how do I reset my password?", "what's the API rate limit?". Running the full router → specialist → KB-search pipeline for every one of those costs real money for an answer the system has already produced. The capstone has a `semantic_cache.py` module that intercepts `run_support_agent` before any LLM call.
+
+Tunables:
+
+| Constant               | Default | Meaning                                                       |
+| ---------------------- | ------- | ------------------------------------------------------------- |
+| `SIMILARITY_THRESHOLD` | 0.95    | Cosine similarity above this is treated as the same question  |
+| `TTL_SECONDS`          | 3600    | Entries older than this are skipped on read and pruned on write |
+
+How it works:
+
+1. On entry to `run_support_agent`, decide whether the request is **cacheable**: only when `session_id`, `customer_id`, and `image_path` are all absent. Anything contextual (multi-turn chat, customer-specific lookup, vision) skips the cache entirely — same wording, different answer.
+2. For cacheable requests, embed the query (reusing `embed_texts` from the RAG pipeline so the embedding space is consistent) and scan stored entries for the highest cosine similarity above `SIMILARITY_THRESHOLD`.
+3. On hit: yield a synthetic `status` event (`{"cache": "hit"}`), replay the cached response as one `token` event, then a `done` event with `cost: 0.0` and `cached: True`. The SSE consumer sees the same event shape as a real run — the only difference is observability.
+4. On miss: run the full pipeline, then store `(embedding, query, response, timestamp)` after the agent finishes. Pruning of expired entries happens lazily on each write to keep the list bounded without slowing down reads.
+
+Why match on **embedding similarity** instead of exact string equality: customers paraphrase. "How much does the Pro plan cost?" and "What's the price of the Pro tier?" should both hit the same cached answer. With OpenAI's `text-embedding-3-small`, those typically score around 0.94-0.97. The threshold is the safety knob — drop it for a higher hit rate (and risk wrong answers), raise it for stricter matching (and miss more paraphrases).
+
+Why find the **best** match, not the first: two cached entries could both be above threshold for a new query. We want the one that's most semantically similar, so the lookup loop tracks the best score rather than returning early.
+
+In production you'd swap the in-memory list for pgvector or Pinecone, key by `(customer_tier, locale)` so customers on different plans don't share answers, and add hit/miss counters to a metrics endpoint so you can tune the threshold from real traffic.
+
 ### Observability across agents
 
 In Module 10 you traced single-endpoint requests. The capstone has multi-step flows:
