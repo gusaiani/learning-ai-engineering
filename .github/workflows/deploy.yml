@@ -1,0 +1,39 @@
+name: Deploy AI Tech Support
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "13-capstone/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 159.203.108.19
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 10m
+          script: |
+            set -e
+            cd /opt/ai-tech-support
+            git fetch origin main
+            git reset --hard origin/main
+
+            command -v uv >/dev/null || pip install --break-system-packages uv
+            uv pip install --python /opt/ai-tech-support/venv/bin/python -r 13-capstone/requirements.txt
+
+            cp 13-capstone/systemd/ai-tech-support.service /etc/systemd/system/
+            cp 13-capstone/nginx/ai-tech-support.gustavosaiani.com.conf /etc/nginx/sites-available/
+            ln -sf /etc/nginx/sites-available/ai-tech-support.gustavosaiani.com.conf \
+                   /etc/nginx/sites-enabled/ai-tech-support.gustavosaiani.com.conf
+
+            nginx -t && systemctl reload nginx
+            systemctl daemon-reload
+            systemctl enable --now ai-tech-support
+            systemctl restart ai-tech-support
