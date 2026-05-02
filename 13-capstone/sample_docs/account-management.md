@@ -4,11 +4,11 @@
 
 NovaCRM supports three roles:
 
-| Role | Permissions |
-|------|------------|
-| **Admin** | Full access. Manage billing, API keys, team members, SSO, data export. Can delete the workspace. |
+| Role       | Permissions                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| **Admin**  | Full access. Manage billing, API keys, team members, SSO, data export. Can delete the workspace.     |
 | **Member** | Create/edit/delete contacts, deals, activities. Run reports. Cannot manage billing or team settings. |
-| **Viewer** | Read-only access to contacts, deals, reports. Cannot create or modify anything. |
+| **Viewer** | Read-only access to contacts, deals, reports. Cannot create or modify anything.                      |
 
 ### Inviting team members
 
@@ -26,6 +26,7 @@ Admins can change any member's role at Settings > Team. Role changes take effect
 ### Removing members
 
 Admins can remove team members at Settings > Team. When a member is removed:
+
 - Their contacts and deals are reassigned to the admin who removed them
 - Their API keys are revoked immediately
 - Their login is disabled
@@ -36,6 +37,7 @@ Admins can remove team members at Settings > Team. When a member is removed:
 SSO is available on the **Enterprise plan** only.
 
 ### Supported providers
+
 - SAML 2.0 (Okta, Azure AD, OneLogin, any SAML-compliant IdP)
 - OpenID Connect (OIDC) (Google Workspace, Auth0)
 

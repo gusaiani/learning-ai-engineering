@@ -32,6 +32,7 @@ class ChatRequest(BaseModel):
     message: str
     customer_id: Optional[str] = None
     image_path: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -89,7 +90,7 @@ async def chat_stream(req: ChatRequest):
     start = time.time()
 
     async def event_generator():
-        for event in run_support_agent(req.message, req.customer_id, req.image_path):
+        for event in run_support_agent(req.message, req.customer_id, req.image_path, req.session_id):
             if event.type == "done":
                 latency_ms = (time.time() - start) * 1000
                 _metrics["total_requests"] += 1
@@ -113,7 +114,7 @@ async def chat_sync(req: ChatRequest):
     routing = {}
     cost = 0.0
 
-    for event in run_support_agent(req.message, req.customer_id, req.image_path):
+    for event in run_support_agent(req.message, req.customer_id, req.image_path, req.session_id):
         if event.type == "token":
             response_parts.append(event.data["content"])
         elif event.type == "status":

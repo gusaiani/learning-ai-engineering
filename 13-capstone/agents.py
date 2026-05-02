@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from config import openai_client, CHAT_MODEL, VISION_MODEL, calculate_cost, observe
 from knowledge import search as kb_search
+from sessions import get_history, append_turn
 
 # ---------------------------------------------------------------------------
 # Mock data (simulates a real database)
@@ -481,11 +482,13 @@ def run_support_agent(
     message: str,
     customer_id: str | None = None,
     image_path: str | None = None,
+    session_id: str | None = None,
 ) -> Generator[AgentEvent, None, None]:
     """Full support pipeline: route → select specialist → run agent → respond.
 
     Yields AgentEvent objects for the server to convert to SSE.
     """
+    history = get_history(session_id) if session_id else []
     decision = route_query(message)
     yield AgentEvent(type="status", data={"route": decision.category, "confidence": decision.confidence})
 
@@ -497,5 +500,14 @@ def run_support_agent(
     if image_path:
         user_message += f"\n[Attached image: {image_path}]"
 
-    messages = [{"role": "user", "content": user_message}]
-    yield from run_agent_loop(messages, specialist["tools"], specialist["prompt"])
+    messages = history + [{"role": "user", "content": user_message}]
+    
+    assistant_parts: list[str] = []
+    for event in run_agent_loop(messages, specialist["tools"], specialist["prompt"]):
+        if event.type == "token":
+            assistant_parts.append(event.data["content"])
+        yield event
+
+    if session_id:
+        append_turn(session_id, "user", user_message)
+        append_turn(session_id, "assistant", "".join(assistant_parts))

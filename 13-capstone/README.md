@@ -27,6 +27,15 @@ curl http://localhost:8000/chat/sync \
   -H "Content-Type: application/json" \
   -d '{"message": "I want to cancel my subscription", "customer_id": "C-1001"}'
 
+# Multi-turn chat — pass the same session_id across requests
+curl http://localhost:8000/chat/sync \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What plans do you offer?", "session_id": "alice-42"}'
+
+curl http://localhost:8000/chat/sync \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Which one is best for a 5-person team?", "session_id": "alice-42"}'
+
 # Knowledge base contents
 curl http://localhost:8000/knowledge
 
@@ -202,6 +211,20 @@ data: {"cost": 0.0012, "tools_called": 2}
 ```
 
 This requires your agent loop to be a **generator** that yields events — tool call starts, tool call completions, and response tokens. The FastAPI endpoint converts these events to SSE. The key design decision: the agent loop doesn't know it's being streamed. It just yields events. The server decides what to do with them.
+
+### Conversation memory
+
+Single-turn agents are easy: every request is independent. Multi-turn chat is where the design decisions show up. NovaCRM's customers don't ask their full question on the first message — they refine ("which plan?", "actually, for a 5-person team?"), and the agent has to remember turn 1 to answer turn 2.
+
+The capstone uses an opt-in `session_id` field on the chat request. Stateless calls (no `session_id`) keep working the same as before — no history is loaded or saved. When a `session_id` is present:
+
+1. `run_support_agent` loads prior history from `sessions.py` and prepends it to the new user turn before calling the agent loop.
+2. After the loop completes, both the user message and the assembled assistant response are appended to the session.
+3. Persistence happens **after** the loop returns, so a mid-stream error doesn't poison the history with a half-formed reply.
+
+The store is a plain in-memory dict keyed by `session_id`. Restarts wipe history — fine for a learning project, but in production you'd swap for Redis or Postgres. The existing message format (`{"role", "content"}` dicts) is already the OpenAI shape, so no conversion is needed when re-sending history to the model.
+
+One subtlety: the router runs on every turn and only sees the latest message, not the history. That means a follow-up like "and the enterprise plan?" might route to `general` instead of `billing`. For this project that's acceptable — all specialists share the same KB tool — but in a system with strict tool isolation per route, you'd want the router to see the conversation context too.
 
 ### Observability across agents
 
