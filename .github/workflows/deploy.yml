@@ -25,8 +25,9 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
-            command -v uv >/dev/null || pip install --break-system-packages uv
-            uv pip install --python /opt/ai-tech-support/venv/bin/python -r 13-capstone/requirements.txt
+            UV=/opt/ai-tech-support/venv/bin/uv
+            [ -x "$UV" ] || /opt/ai-tech-support/venv/bin/pip install uv
+            "$UV" pip install --python /opt/ai-tech-support/venv/bin/python -r 13-capstone/requirements.txt
 
             cp 13-capstone/systemd/ai-tech-support.service /etc/systemd/system/
             cp 13-capstone/nginx/ai-tech-support.gustavosaiani.com.conf /etc/nginx/sites-available/
