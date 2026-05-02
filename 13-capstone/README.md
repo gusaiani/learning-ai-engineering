@@ -326,7 +326,7 @@ Trace: POST /chat
 The pattern: **every function that does meaningful work gets its own span**, and spans nest to show the call hierarchy. Langfuse's `@observe` decorator handles this if you use it consistently:
 
 ```python
-from langfuse.decorators import observe
+from langfuse import observe
 
 @observe(name="route_query")
 def route_query(message: str) -> str:
@@ -342,6 +342,8 @@ What to track on each span:
 - **LLM calls**: model, input/output tokens, cost, the actual prompt and response
 - **Tool calls**: tool name, arguments, result (truncated), latency
 - **Errors**: the full exception, not just "failed"
+
+> **Langfuse 4.x note.** The `langfuse.decorators` submodule was removed in 4.0. Import `observe` from the top-level `langfuse` package instead: `from langfuse import observe`. The 3.x path (`from langfuse.decorators import observe`) raises `ModuleNotFoundError` — easy to miss if your code wraps the import in a `try/except` that falls back to a no-op decorator (then nothing is traced and there are no errors in the logs to tell you why). Verify by calling `Langfuse().auth_check()` and confirming a span shows up in the dashboard.
 
 ### Eval strategy for compound systems
 
