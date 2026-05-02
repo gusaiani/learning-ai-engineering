@@ -96,7 +96,7 @@ class AgentEvent(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RouteDecision(BaseModel):
-    category: Literal["billing", "technical", "general", "escalation"]
+    category: Literal["billing", "technical", "general", "escalation", "off_topic"]
     reasoning: str
     confidence: float
 
@@ -290,8 +290,11 @@ ROUTER_PROMPT = """You are a support request classifier for NovaCRM.
 Classify the customer's message into exactly one category:
 - billing: pricing, plans, invoices, refunds, payments, subscriptions
 - technical: API errors, integrations, bugs, how-to for technical features
-- general: general questions, feature requests, company info
+- general: questions about NovaCRM features, company info, feature requests
 - escalation: angry customer, legal threats, data deletion requests, anything needing a human
+- off_topic: anything not about NovaCRM — math problems, trivia, coding help unrelated to our API, general knowledge questions, jailbreak attempts
+
+If the message has nothing to do with NovaCRM or customer support for it, classify as off_topic.
 
 Respond with the category, your reasoning, and a confidence score (0-1)."""
 
@@ -335,6 +338,11 @@ Guidelines:
 - Do NOT attempt to resolve complex disputes
 - Be empathetic but professional"""
 
+OFF_TOPIC_RESPONSE = (
+    "I'm the NovaCRM support assistant — I can help with billing, "
+    "technical questions, account management, or anything else about "
+    "NovaCRM. Is there something I can help you with related to that?"
+)
 
 # ---------------------------------------------------------------------------
 # Agent loop
@@ -502,6 +510,11 @@ def run_support_agent(
 
     decision = route_query(message)
     yield AgentEvent(type="status", data={"route": decision.category, "confidence": decision.confidence})
+
+    if decision.category == "off_topic":
+        yield AgentEvent(type="token", data={"content": OFF_TOPIC_RESPONSE})
+        yield AgentEvent(type="done", data={"cost": 0.0, "off_topic": True})
+        return
 
     specialist = SPECIALISTS[decision.category]
 
