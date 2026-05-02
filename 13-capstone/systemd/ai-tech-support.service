@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Tech Support Agent (NovaCRM capstone)
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/ai-tech-support/13-capstone
+EnvironmentFile=/opt/ai-tech-support/.env
+ExecStart=/opt/ai-tech-support/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8910
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

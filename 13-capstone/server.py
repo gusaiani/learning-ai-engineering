@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agents import run_support_agent, AgentEvent
@@ -23,6 +24,8 @@ from rate_limit import check_rate_limit
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="NovaCRM Support Agent", version="1.0.0")
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -187,3 +190,7 @@ async def metrics():
 async def health():
     """Health check."""
     return {"status": "ok", "uptime_seconds": round(time.time() - _start_time, 1)}
+
+
+# Static files (chat UI). Mounted last so API routes above take precedence.
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
