@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from config import openai_client, CHAT_MODEL, VISION_MODEL, calculate_cost, observe
 from knowledge import search as kb_search
 from sessions import get_history, append_turn
+from semantic_cache import lookup as cache_lookup, store as cache_store
 
 # ---------------------------------------------------------------------------
 # Mock data (simulates a real database)
@@ -489,6 +490,16 @@ def run_support_agent(
     Yields AgentEvent objects for the server to convert to SSE.
     """
     history = get_history(session_id) if session_id else []
+    cacheable = not (session_id or customer_id or image_path)
+
+    if cacheable:
+        cached = cache_lookup(message)
+        if cached:
+            yield AgentEvent(type="status", data={"cache": "hit"})
+            yield AgentEvent(type="token", data={"content": cached})
+            yield AgentEvent(type="done", data={"cost": 0.0, "cached": True})
+            return
+
     decision = route_query(message)
     yield AgentEvent(type="status", data={"route": decision.category, "confidence": decision.confidence})
 
@@ -508,6 +519,12 @@ def run_support_agent(
             assistant_parts.append(event.data["content"])
         yield event
 
+    final_response = "".join(assistant_parts)
+
+    if cacheable and final_response:
+        cache_store(message, final_response)
+
+
     if session_id:
         append_turn(session_id, "user", user_message)
-        append_turn(session_id, "assistant", "".join(assistant_parts))
+        append_turn(session_id, "assistant", final_response)
