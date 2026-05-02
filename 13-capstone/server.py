@@ -45,6 +45,7 @@ class ChatResponse(BaseModel):
     tools_called: list[str]
     cost: float
     latency_ms: float
+    cached: bool = False
 
 
 class IngestRequest(BaseModel):
@@ -121,6 +122,7 @@ async def chat_sync(req: ChatRequest):
     tools_called = []
     routing = {}
     cost = 0.0
+    cached = False
 
     for event in run_support_agent(req.message, req.customer_id, req.image_path, req.session_id):
         if event.type == "token":
@@ -130,6 +132,8 @@ async def chat_sync(req: ChatRequest):
                 tools_called.append(event.data["tool"])
             if "route" in event.data:
                 routing = event.data
+            if event.data.get("cache") == "hit":
+                cached = True
         elif event.type == "error":
             _metrics["total_errors"] += 1
             raise HTTPException(status_code=500, detail=event.data["message"])
@@ -147,6 +151,7 @@ async def chat_sync(req: ChatRequest):
         tools_called=tools_called,
         cost=cost,
         latency_ms=round(latency_ms, 1),
+        cached=cached,
     )
 
 @app.post("/ingest", response_model=IngestResponse)
