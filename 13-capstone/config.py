@@ -21,8 +21,7 @@ CHROMA_PATH = Path(__file__).parent / ".chroma_db"
 chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 
 try:
-    from langfuse import Langfuse
-    from langfuse.decorators import observe
+    from langfuse import Langfuse, observe
 
     langfuse_client = Langfuse()
 except Exception:
