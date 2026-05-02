@@ -9,57 +9,56 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    /* ============================================================
-       Base tokens + structure (shared across all layouts)
-       ============================================================ */
     :root {
-      --bg: #fafaf9;
-      --panel: #ffffff;
-      --border: #e7e5e4;
-      --text: #0c0a09;
-      --muted: #78716c;
-      --accent: #2563eb;
-      --accent-soft: #dbeafe;
-      --tool: #f5f5f4;
-      --route: #ecfdf5;
-      --route-text: #065f46;
-      --cache: #fef3c7;
-      --cache-text: #854d0e;
-      --error: #fef2f2;
-      --error-text: #991b1b;
+      --bg: #07070a;
+      --panel: rgba(20, 20, 28, 0.7);
+      --border: #2a2a35;
+      --text: #e5e5e5;
+      --muted: #8b8b96;
+      --accent: #4ade80;
+      --accent-soft: #064e3b;
+      --tool: rgba(30, 30, 40, 0.6);
+      --route: rgba(6, 78, 59, 0.5);
+      --route-text: #6ee7b7;
+      --cache: rgba(120, 53, 15, 0.5);
+      --cache-text: #fdba74;
+      --error: rgba(127, 29, 29, 0.5);
+      --error-text: #fca5a5;
 
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-      --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-
-      --radius: 16px;
-      --max-col: 760px;
+      --radius: 4px;
     }
 
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; height: 100%; }
     body {
-      font: 15px/1.55 var(--font-sans);
+      font: 15px/1.55 var(--font-mono);
       color: var(--text);
-      background: var(--bg);
+      background:
+        radial-gradient(900px 600px at 0% 0%, rgba(74, 222, 128, 0.18) 0%, transparent 55%),
+        radial-gradient(1000px 700px at 100% 0%, rgba(99, 102, 241, 0.22) 0%, transparent 55%),
+        radial-gradient(900px 700px at 50% 100%, rgba(236, 72, 153, 0.15) 0%, transparent 55%),
+        var(--bg);
+      background-attachment: fixed;
       display: flex;
       flex-direction: column;
-      transition: background 0.25s ease, color 0.25s ease;
     }
 
     header {
       padding: 20px 28px;
       border-bottom: 1px solid var(--border);
-      background: var(--panel);
+      background: rgba(7, 7, 10, 0.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
-    header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+    header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
     header p  { margin: 0; color: var(--muted); font-size: 13px; }
 
     main {
       flex: 1;
       display: flex;
       flex-direction: column;
-      max-width: var(--max-col);
+      max-width: 760px;
       width: 100%;
       margin: 0 auto;
       padding: 24px;
@@ -76,11 +75,13 @@
       font-size: 13px;
       color: var(--text);
       cursor: pointer;
-      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: border-color 0.15s, background 0.15s;
     }
     .examples button:hover {
       border-color: var(--accent);
-      background: var(--accent-soft);
+      background: rgba(74, 222, 128, 0.12);
     }
 
     .conversation {
@@ -105,15 +106,22 @@
     .turn { display: flex; flex-direction: column; gap: 8px; }
     .turn.user .bubble {
       align-self: flex-end;
-      background: var(--accent);
-      color: white;
+      background: transparent;
+      color: var(--accent);
+      border: 1px dashed var(--accent);
       max-width: 80%;
+    }
+    .turn.user .bubble::before {
+      content: "$ ";
+      opacity: 0.7;
     }
     .turn.assistant .bubble {
       align-self: flex-start;
       background: var(--panel);
       border: 1px solid var(--border);
       max-width: 80%;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
     .bubble {
       padding: 10px 14px;
@@ -128,12 +136,11 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
-      font-family: var(--font-mono);
       font-size: 12px;
     }
     .event {
       padding: 4px 10px;
-      border-radius: 6px;
+      border-radius: var(--radius);
       background: var(--tool);
       color: var(--muted);
     }
@@ -156,27 +163,24 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 8px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
-    form select, form input[type="text"] {
+    form select, form input[type="text"], form textarea {
       font: inherit;
-      font-size: 13px;
       padding: 6px 10px;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      background: white;
+      border-radius: var(--radius);
+      background: rgba(0, 0, 0, 0.5);
       color: var(--text);
     }
+    form select { font-size: 13px; }
     form textarea {
-      font: inherit;
       font-size: 14px;
       padding: 8px 12px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
       resize: none;
       min-height: 40px;
       max-height: 200px;
-      background: white;
-      color: var(--text);
     }
     form textarea:focus, form select:focus {
       outline: none;
@@ -184,12 +188,12 @@
     }
     form button[type="submit"] {
       background: var(--accent);
-      color: white;
+      color: #000;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--radius);
       padding: 10px 18px;
       font: inherit;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
     }
     form button[type="submit"]:disabled { opacity: 0.5; cursor: wait; }
@@ -213,530 +217,9 @@
       color: var(--error-text);
       background: var(--error);
     }
-
-    /* ============================================================
-       Picker stack (always visible, top-right)
-       ============================================================ */
-    .picker-stack {
-      position: fixed;
-      top: 12px;
-      right: 12px;
-      z-index: 100;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      align-items: flex-end;
-    }
-    .picker {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 8px 6px 12px;
-      background: rgba(255,255,255,0.85);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-      font-family: var(--font-sans);
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .picker label { font-weight: 500; letter-spacing: 0.02em; }
-    .picker select {
-      font: inherit;
-      font-size: 12px;
-      border: none;
-      background: transparent;
-      color: var(--text);
-      padding: 4px 6px;
-      border-radius: 999px;
-      cursor: pointer;
-    }
-    .picker select:focus { outline: none; }
-
-    /* ============================================================
-       Layout 01 — classic (default)
-       Subtle polish on top of the original look.
-       ============================================================ */
-    body[data-layout="classic"] header h1 { font-size: 19px; }
-
-    /* ============================================================
-       Layout 02 — minimal
-       No header, ample whitespace, soft assistant background only.
-       ============================================================ */
-    body[data-layout="minimal"] { background: #ffffff; }
-    body[data-layout="minimal"] header { display: none; }
-    body[data-layout="minimal"] main {
-      max-width: 700px;
-      padding: 64px 24px 24px;
-      gap: 24px;
-    }
-    body[data-layout="minimal"] .turn.assistant .bubble {
-      background: #f6f6f5;
-      border: none;
-    }
-    body[data-layout="minimal"] .turn.user .bubble {
-      background: #0c0a09;
-    }
-    body[data-layout="minimal"] form {
-      border: none;
-      border-top: 1px solid var(--border);
-      border-radius: 0;
-      background: transparent;
-      padding: 12px 0 0;
-    }
-    body[data-layout="minimal"] form textarea,
-    body[data-layout="minimal"] form select {
-      background: #f6f6f5;
-      border-color: transparent;
-    }
-
-    /* ============================================================
-       Layout 03 — terminal
-       Dark, monospace, hard edges, green accent.
-       ============================================================ */
-    body[data-layout="terminal"] {
-      --bg: #07070a;
-      --panel: rgba(20, 20, 28, 0.7);
-      --border: #2a2a35;
-      --text: #e5e5e5;
-      --muted: #8b8b96;
-      --accent: #4ade80;
-      --accent-soft: #064e3b;
-      --tool: rgba(30, 30, 40, 0.6);
-      --route: rgba(6, 78, 59, 0.5);
-      --route-text: #6ee7b7;
-      --cache: rgba(120, 53, 15, 0.5);
-      --cache-text: #fdba74;
-      --error: rgba(127, 29, 29, 0.5);
-      --error-text: #fca5a5;
-      --radius: 4px;
-      font-family: var(--font-mono);
-      color: var(--text);
-      background:
-        radial-gradient(900px 600px at 0% 0%, rgba(74, 222, 128, 0.18) 0%, transparent 55%),
-        radial-gradient(1000px 700px at 100% 0%, rgba(99, 102, 241, 0.22) 0%, transparent 55%),
-        radial-gradient(900px 700px at 50% 100%, rgba(236, 72, 153, 0.15) 0%, transparent 55%),
-        #07070a;
-      background-attachment: fixed;
-    }
-    body[data-layout="terminal"] header {
-      background: rgba(7, 7, 10, 0.55);
-      border-bottom-color: var(--border);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-    }
-    body[data-layout="terminal"] header h1 { font-family: var(--font-mono); }
-    body[data-layout="terminal"] .turn.user .bubble {
-      background: transparent;
-      color: var(--accent);
-      border: 1px dashed var(--accent);
-    }
-    body[data-layout="terminal"] .turn.user .bubble::before {
-      content: "$ ";
-      opacity: 0.7;
-    }
-    body[data-layout="terminal"] .turn.assistant .bubble {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-    }
-    body[data-layout="terminal"] form {
-      background: var(--panel);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-    }
-    body[data-layout="terminal"] form textarea,
-    body[data-layout="terminal"] form select {
-      background: rgba(0, 0, 0, 0.5);
-      color: var(--text);
-      font-family: var(--font-mono);
-      border-color: var(--border);
-    }
-    body[data-layout="terminal"] form button[type="submit"] {
-      color: #000;
-      font-weight: 600;
-    }
-    body[data-layout="terminal"] .examples button {
-      background: var(--panel);
-      color: var(--text);
-      font-family: var(--font-mono);
-      border-color: var(--border);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-    }
-    body[data-layout="terminal"] .examples button:hover {
-      border-color: var(--accent);
-      background: rgba(74, 222, 128, 0.12);
-    }
-    body[data-layout="terminal"] .picker {
-      background: rgba(15, 15, 22, 0.7);
-      border-color: var(--border);
-      color: var(--muted);
-    }
-    body[data-layout="terminal"] .picker select { color: var(--text); }
-
-    /* ============================================================
-       Layout 04 — sidebar
-       Left rail (240px) holds title + examples; main is conversation.
-       ============================================================ */
-    body[data-layout="sidebar"] {
-      flex-direction: row;
-      background: #f7f7f6;
-    }
-    body[data-layout="sidebar"] header {
-      width: 260px;
-      flex-shrink: 0;
-      border-right: 1px solid var(--border);
-      border-bottom: none;
-      padding: 28px 24px;
-      background: #ffffff;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-    body[data-layout="sidebar"] header h1 { font-size: 16px; }
-    body[data-layout="sidebar"] header p   { font-size: 12px; line-height: 1.55; }
-    body[data-layout="sidebar"] header::after {
-      content: "Try one:";
-      display: block;
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-top: 12px;
-    }
-    body[data-layout="sidebar"] .picker-stack { right: 12px; }
-    body[data-layout="sidebar"] main {
-      max-width: 760px;
-      padding: 28px 32px;
-    }
-    /* Move examples into the sidebar visually (sticky-ish positioning).
-       We do this by making header a flex column that the examples slot under. */
-    body[data-layout="sidebar"] main > .examples {
-      position: fixed;
-      top: 200px;
-      left: 24px;
-      width: 212px;
-      flex-direction: column;
-      align-items: stretch;
-    }
-    body[data-layout="sidebar"] main > .examples button {
-      text-align: left;
-      border-radius: 8px;
-    }
-    @media (max-width: 900px) {
-      body[data-layout="sidebar"] { flex-direction: column; }
-      body[data-layout="sidebar"] header { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
-      body[data-layout="sidebar"] main > .examples { position: static; width: auto; flex-direction: row; }
-    }
-
-    /* ============================================================
-       Layout 05 — focus
-       Floating pill composer, soft radial gradient, no header chrome.
-       ============================================================ */
-    body[data-layout="focus"] {
-      background:
-        radial-gradient(1200px 600px at 50% -10%, #eef4ff 0%, transparent 60%),
-        radial-gradient(900px 500px at 100% 100%, #fef6ff 0%, transparent 60%),
-        #fafaf9;
-    }
-    body[data-layout="focus"] header {
-      background: transparent;
-      border-bottom: none;
-      text-align: center;
-      padding: 32px 24px 0;
-    }
-    body[data-layout="focus"] main {
-      max-width: 780px;
-      padding: 24px 24px 140px;
-    }
-    body[data-layout="focus"] .conversation:empty::before { padding-top: 8vh; }
-    body[data-layout="focus"] form {
-      position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: calc(100% - 32px);
-      max-width: 720px;
-      border-radius: 999px;
-      padding: 6px 6px 6px 12px;
-      box-shadow: 0 8px 32px rgba(15,23,42,0.08), 0 2px 6px rgba(15,23,42,0.04);
-      backdrop-filter: blur(10px);
-      background: rgba(255,255,255,0.85);
-    }
-    body[data-layout="focus"] form textarea {
-      border: none;
-      background: transparent;
-      min-height: 36px;
-    }
-    body[data-layout="focus"] form select {
-      border: none;
-      background: transparent;
-    }
-    body[data-layout="focus"] form button[type="submit"] {
-      border-radius: 999px;
-    }
-
-    /* ============================================================
-       Layout 06 — editorial
-       Serif typography, narrow column, refined spacing.
-       ============================================================ */
-    body[data-layout="editorial"] {
-      background: #fbfaf7;
-      font-family: var(--font-serif);
-      font-size: 16px;
-    }
-    body[data-layout="editorial"] header {
-      background: transparent;
-      border-bottom: 1px solid #e8e3d6;
-      text-align: center;
-      padding: 36px 24px 28px;
-    }
-    body[data-layout="editorial"] header h1 {
-      font-family: var(--font-serif);
-      font-size: 28px;
-      font-weight: 500;
-      letter-spacing: -0.01em;
-    }
-    body[data-layout="editorial"] header p {
-      font-style: italic;
-      color: #8b7e63;
-    }
-    body[data-layout="editorial"] main {
-      max-width: 640px;
-      padding: 32px 24px;
-    }
-    body[data-layout="editorial"] .turn.user .bubble {
-      background: #1a1a17;
-      border-radius: 4px;
-    }
-    body[data-layout="editorial"] .turn.assistant .bubble {
-      background: transparent;
-      border: none;
-      padding: 0;
-      max-width: 100%;
-    }
-    body[data-layout="editorial"] .turn.assistant .bubble::before {
-      content: "";
-      display: block;
-      width: 32px;
-      height: 1px;
-      background: #c4b894;
-      margin-bottom: 14px;
-    }
-    body[data-layout="editorial"] form {
-      background: #ffffff;
-      border-color: #e8e3d6;
-    }
-    body[data-layout="editorial"] .examples button {
-      font-family: var(--font-sans);
-      background: transparent;
-      border-color: #d8d0b8;
-    }
-
-    /* ============================================================
-       Layout 07 — cards
-       Each turn becomes a card with shadow on a soft canvas.
-       ============================================================ */
-    body[data-layout="cards"] { background: #f4f4f5; }
-    body[data-layout="cards"] main { max-width: 800px; gap: 20px; }
-    body[data-layout="cards"] .turn {
-      background: #ffffff;
-      border-radius: 14px;
-      padding: 16px 18px;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 1px rgba(0,0,0,0.03);
-    }
-    body[data-layout="cards"] .turn.user .bubble,
-    body[data-layout="cards"] .turn.assistant .bubble {
-      max-width: 100%;
-      align-self: stretch;
-      padding: 4px 0;
-      background: transparent;
-      border: none;
-      color: var(--text);
-    }
-    body[data-layout="cards"] .turn.user {
-      background: var(--accent);
-    }
-    body[data-layout="cards"] .turn.user .bubble { color: white; }
-    body[data-layout="cards"] form {
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-    }
-
-    /* ============================================================
-       Layout 08 — glass
-       Vivid gradient with frosted-glass panels.
-       ============================================================ */
-    body[data-layout="glass"] {
-      color: #0f172a;
-      background:
-        radial-gradient(1000px 700px at 0% 0%, #c7d2fe 0%, transparent 55%),
-        radial-gradient(900px 600px at 100% 0%, #fbcfe8 0%, transparent 55%),
-        radial-gradient(900px 700px at 50% 100%, #bbf7d0 0%, transparent 55%),
-        #eef2ff;
-    }
-    body[data-layout="glass"] header {
-      background: rgba(255,255,255,0.55);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-bottom: 1px solid rgba(255,255,255,0.6);
-    }
-    body[data-layout="glass"] .turn.assistant .bubble {
-      background: rgba(255,255,255,0.6);
-      border: 1px solid rgba(255,255,255,0.8);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-    }
-    body[data-layout="glass"] .turn.user .bubble {
-      background: rgba(37,99,235,0.85);
-      backdrop-filter: blur(8px);
-    }
-    body[data-layout="glass"] form {
-      background: rgba(255,255,255,0.55);
-      border-color: rgba(255,255,255,0.7);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-    }
-    body[data-layout="glass"] form textarea,
-    body[data-layout="glass"] form select {
-      background: rgba(255,255,255,0.7);
-      border-color: rgba(255,255,255,0.8);
-    }
-    body[data-layout="glass"] .examples button {
-      background: rgba(255,255,255,0.55);
-      border-color: rgba(255,255,255,0.7);
-      backdrop-filter: blur(6px);
-    }
-
-    /* ============================================================
-       Layout 09 — split
-       Conversation on the left, events rail to the right of each turn.
-       ============================================================ */
-    body[data-layout="split"] main { max-width: 1080px; }
-    body[data-layout="split"] .turn.assistant {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 240px;
-      grid-template-rows: auto auto;
-      gap: 8px 20px;
-      align-items: start;
-    }
-    body[data-layout="split"] .turn.assistant .bubble {
-      grid-column: 1;
-      grid-row: 1;
-      max-width: 100%;
-    }
-    body[data-layout="split"] .turn.assistant .events {
-      grid-column: 2;
-      grid-row: 1 / span 2;
-      max-width: 100%;
-      align-self: start;
-      padding: 10px 12px;
-      border-left: 2px solid var(--border);
-      background: transparent;
-    }
-    body[data-layout="split"] .turn.assistant .meta {
-      grid-column: 1;
-      grid-row: 2;
-    }
-    @media (max-width: 800px) {
-      body[data-layout="split"] .turn.assistant {
-        grid-template-columns: 1fr;
-      }
-      body[data-layout="split"] .turn.assistant .events {
-        grid-column: 1;
-        grid-row: auto;
-        border-left: none;
-        padding: 0;
-      }
-    }
-
-    /* ============================================================
-       Layout 10 — notebook
-       Yellow paper with ruled lines and a red margin.
-       ============================================================ */
-    body[data-layout="notebook"] {
-      font-family: var(--font-serif);
-      color: #1f2937;
-      background:
-        linear-gradient(to right, transparent 64px, #ef4444 64px, #ef4444 65px, transparent 65px),
-        repeating-linear-gradient(
-          to bottom,
-          #fefce8 0px, #fefce8 27px,
-          #d4d4aa 27px, #d4d4aa 28px
-        );
-    }
-    body[data-layout="notebook"] header {
-      background: transparent;
-      border-bottom: none;
-      padding-left: 80px;
-    }
-    body[data-layout="notebook"] header h1 {
-      font-family: var(--font-serif);
-      font-size: 22px;
-      font-weight: 500;
-    }
-    body[data-layout="notebook"] main {
-      padding-left: 80px;
-      padding-right: 24px;
-      max-width: 820px;
-    }
-    body[data-layout="notebook"] .turn.user .bubble {
-      background: transparent;
-      color: #1d4ed8;
-      border: none;
-      font-style: italic;
-      max-width: 100%;
-      padding-left: 0;
-      padding-right: 0;
-    }
-    body[data-layout="notebook"] .turn.user .bubble::before {
-      content: "Q. ";
-      font-weight: 600;
-      font-style: normal;
-    }
-    body[data-layout="notebook"] .turn.assistant .bubble {
-      background: transparent;
-      border: none;
-      padding: 0;
-      max-width: 100%;
-    }
-    body[data-layout="notebook"] .turn.assistant .bubble::before {
-      content: "A. ";
-      font-weight: 600;
-    }
-    body[data-layout="notebook"] form {
-      background: rgba(255,255,255,0.7);
-      border-color: #d4d4aa;
-    }
-    body[data-layout="notebook"] .examples button {
-      background: rgba(255,255,255,0.6);
-      border-color: #d4d4aa;
-      font-family: var(--font-sans);
-    }
   </style>
 </head>
-<body data-layout="classic">
-  <div class="picker-stack">
-    <div class="picker">
-      <label for="layout-select">Layout</label>
-      <select id="layout-select" aria-label="Choose layout">
-        <option value="classic">01 · Classic</option>
-        <option value="minimal">02 · Minimal</option>
-        <option value="terminal">03 · Terminal</option>
-        <option value="sidebar">04 · Sidebar</option>
-        <option value="focus">05 · Focus</option>
-        <option value="editorial">06 · Editorial</option>
-        <option value="cards">07 · Cards</option>
-        <option value="glass">08 · Glass</option>
-        <option value="split">09 · Split</option>
-        <option value="notebook">10 · Notebook</option>
-      </select>
-    </div>
-  </div>
-
+<body>
   <header>
     <h1>NovaCRM Support Agent</h1>
     <p>Router → specialist agents · RAG · streaming · semantic cache · per-customer rate limiting</p>
@@ -771,18 +254,6 @@
   </main>
 
   <script>
-    // ---- Layout picker -------------------------------------------------
-    const LAYOUT_KEY = "novacrm.layout";
-    const layoutSelect = document.getElementById("layout-select");
-    const savedLayout = localStorage.getItem(LAYOUT_KEY) || "classic";
-    document.body.dataset.layout = savedLayout;
-    layoutSelect.value = savedLayout;
-    layoutSelect.addEventListener("change", () => {
-      document.body.dataset.layout = layoutSelect.value;
-      localStorage.setItem(LAYOUT_KEY, layoutSelect.value);
-    });
-
-    // ---- Chat ----------------------------------------------------------
     const conversation = document.getElementById("conversation");
     const form = document.getElementById("composer");
     const promptEl = document.getElementById("prompt");
