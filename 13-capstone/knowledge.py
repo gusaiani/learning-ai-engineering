@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from config import openai_client, chroma_client, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
+from config import openai_client, chroma_client, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, observe
 
 # ---------------------------------------------------------------------------
 # ChromaDB collection
@@ -52,7 +52,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
-
+@observe(name="embed_texts")
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Call OpenAI embeddings API for a batch of texts. Return list of vectors."""
     response = openai_client.embeddings.create(
@@ -106,8 +106,8 @@ def ingest_directory(dir_path: Path) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # Search
-# ---------------------------------------------------------------------------
-
+# -----------------
+@observe(name="search")
 def search(query: str, top_k: int = 5) -> list[dict]:
     """Embed query, search ChromaDB, return top-k results.
 
