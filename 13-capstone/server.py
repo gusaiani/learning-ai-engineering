@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from agents import run_support_agent, AgentEvent
 from knowledge import ingest_file, ingest_directory, list_documents, search
+from rate_limit import check_rate_limit
 
 # ---------------------------------------------------------------------------
 # App
@@ -87,6 +88,8 @@ async def chat_stream(req: ChatRequest):
       event: done     — request complete, includes cost/usage
       event: error    — something went wrong
     """
+    check_rate_limit(req.customer_id)
+
     start = time.time()
 
     async def event_generator():
@@ -107,6 +110,8 @@ async def chat_stream(req: ChatRequest):
 @app.post("/chat/sync", response_model=ChatResponse)
 async def chat_sync(req: ChatRequest):
     """Non-streaming chat. Collects all events and returns a single response."""
+    check_rate_limit(req.customer_id)
+    
     start = time.time()
 
     response_parts = []

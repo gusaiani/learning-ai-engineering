@@ -226,6 +226,37 @@ The store is a plain in-memory dict keyed by `session_id`. Restarts wipe history
 
 One subtlety: the router runs on every turn and only sees the latest message, not the history. That means a follow-up like "and the enterprise plan?" might route to `general` instead of `billing`. For this project that's acceptable — all specialists share the same KB tool — but in a system with strict tool isolation per route, you'd want the router to see the conversation context too.
 
+### Rate limiting
+
+Public chat endpoints are easy targets for abuse: each request runs an LLM agent loop that costs real money. The capstone uses a **token-bucket** rate limiter (`rate_limit.py`) keyed by `customer_id`, with a single shared bucket for anonymous (no-`customer_id`) callers.
+
+Each bucket has two parameters:
+
+| Constant      | Default | Meaning                                       |
+| ------------- | ------- | --------------------------------------------- |
+| `CAPACITY`    | 5       | Max burst size (tokens)                       |
+| `REFILL_RATE` | 0.5     | Tokens regenerated per second (= 30/min sustained) |
+
+How a request flows: `check_rate_limit(customer_id)` runs at the very top of `/chat` and `/chat/sync`, before any LLM call. The bucket lazily refills based on elapsed wall time (capped at `CAPACITY`, so an idle customer can't accumulate infinite tokens). If at least one token is available it's consumed and the request proceeds; otherwise FastAPI returns `HTTP 429` with a `Retry-After` header.
+
+Why token bucket over a fixed-window counter: it allows short bursts (good UX for a customer firing 3 quick questions) while still capping sustained throughput. Fixed-window has a known boundary problem where a client can send 2x the limit by straddling the reset.
+
+To verify the limit trips, fire requests in parallel — sequential `curl`s give the bucket time to refill between calls:
+
+```bash
+for i in 1 2 3 4 5 6 7; do
+  curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+    -X POST http://localhost:8000/chat/sync \
+    -H "Content-Type: application/json" \
+    -d '{"message": "hi", "customer_id": "C-1001"}' &
+done
+wait
+```
+
+You should see five `200`s and two `429`s. A different `customer_id` gets a separate bucket, so legitimate traffic isn't blocked by another customer's burst.
+
+In production you'd swap the in-memory `_BUCKETS` dict for Redis (so multiple server instances share state) and likely add a tier system — paid customers get higher `CAPACITY`, free tier gets stricter limits.
+
 ### Observability across agents
 
 In Module 10 you traced single-endpoint requests. The capstone has multi-step flows:
