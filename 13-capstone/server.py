@@ -62,6 +62,9 @@ class MetricsResponse(BaseModel):
     total_cost: float
     total_errors: int
     uptime_seconds: float
+    total_input_tokens: int
+    total_cached_input_tokens: int
+    cache_hit_rate: float
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +77,8 @@ _metrics = {
     "total_latency_ms": 0.0,
     "total_cost": 0.0,
     "total_errors": 0,
+    "total_input_tokens": 0,
+    "total_cached_input_tokens": 0,
 }
 
 
@@ -103,6 +108,8 @@ async def chat_stream(req: ChatRequest):
                 _metrics["total_requests"] += 1
                 _metrics["total_latency_ms"] += latency_ms
                 _metrics["total_cost"] += event.data.get("cost", 0.0)
+                _metrics["total_input_tokens"] += event.data.get("input_tokens", 0)
+                _metrics["total_cached_input_tokens"] += event.data.get("cached_input_tokens", 0)
             elif event.type == "error":
                 _metrics["total_errors"] += 1
 
@@ -122,6 +129,8 @@ async def chat_sync(req: ChatRequest):
     tools_called = []
     routing = {}
     cost = 0.0
+    input_tokens = 0
+    cached_input_tokens = 0
     cached = False
 
     for event in run_support_agent(req.message, req.customer_id, req.image_path, req.session_id):
@@ -139,11 +148,15 @@ async def chat_sync(req: ChatRequest):
             raise HTTPException(status_code=500, detail=event.data["message"])
         elif event.type == "done":
             cost = event.data.get("cost", 0.0)
+            input_tokens = event.data.get("input_tokens", 0)
+            cached_input_tokens = event.data.get("cached_input_tokens", 0)
 
     latency_ms = (time.time() - start) * 1000
     _metrics["total_requests"] += 1
     _metrics["total_latency_ms"] += latency_ms
     _metrics["total_cost"] += cost
+    _metrics["total_input_tokens"] += input_tokens
+    _metrics["total_cached_input_tokens"] += cached_input_tokens
 
     return ChatResponse(
         response="".join(response_parts),
@@ -182,12 +195,19 @@ async def metrics():
     total = _metrics["total_requests"]
     avg_latency = _metrics["total_latency_ms"] / total if total else 0.0
 
+    total_input = _metrics["total_input_tokens"]
+    total_cached = _metrics["total_cached_input_tokens"]
+    hit_rate = total_cached / total_input if total_input else 0
+
     return MetricsResponse(
         total_requests=total,
         avg_latency_ms=round(avg_latency, 1),
         total_cost=_metrics["total_cost"],
         total_errors=_metrics["total_errors"],
         uptime_seconds=round(time.time() - _start_time, 1),
+        total_input_tokens=total_input,
+        total_cached_input_tokens=total_cached,
+        cache_hit_rate=round(hit_rate, 3),
     )
 
 

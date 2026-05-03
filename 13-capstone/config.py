@@ -52,8 +52,20 @@ MODEL_PRICES = {
     "text-embedding-3-small": {"input": 0.02 / 1_000_000, "output": 0},
 }
 
+CACHED_INPUT_DISCOUNT = 0.5 # OpenAI charges cached input at 50% of normal
 
-def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate USD cost for a given model and token counts."""
+def calculate_cost(model: str, input_tokens: int, output_tokens: int, cached_input_tokens: int = 0) -> float:
+    """Calculate USD cost for a given model and token counts.
+    
+    `cached_input_tokens` is the portion of `input_tokens` that hit OpenAI's
+    automatic prompt cache and is billed at a discount.
+    """
     prices = MODEL_PRICES.get(model, {"input": 0, "output": 0})
-    return input_tokens * prices["input"] + output_tokens * prices["output"]
+
+    uncached_input_tokens = input_tokens - cached_input_tokens
+    input_cost = (
+        uncached_input_tokens * prices["input"]
+        + cached_input_tokens * prices["input"] * CACHED_INPUT_DISCOUNT
+    )
+    output_cost = output_tokens * prices["output"]
+    return input_cost + output_cost
