@@ -1,5 +1,7 @@
 # AI Engineering Course
 
+**Live capstone:** https://ai-tech-support.gustavosaiani.com/
+
 A project-based course to go from zero to $200k+ AI Engineer, working remotely from Brazil.
 
 **Goal:** Build real things every module. No toy examples. Everything goes in a portfolio.
@@ -23,6 +25,8 @@ A project-based course to go from zero to $200k+ AI Engineer, working remotely f
 | 11 | [Multimodal — Vision & Audio](./11-multimodal/) | Image inputs, audio transcription, OCR | Document intelligence app | ✅ |
 | 12 | [System Design for AI](./12-system-design/) | Architecture, trade-offs, scalability | Design doc for a real system | ✅ |
 | 13 | [Capstone](./13-capstone/) | Everything | Ship a complete AI product | ✅ |
+
+**Portfolio shipped:** all 13 modules complete, top projects deployed and posted publicly. ✅
 
 ---
 
