@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NovaCRM Support Agent — Multi-agent RAG demo</title>
+  <meta name="description" content="A live demo of a multi-agent customer support system: router classifies messages, specialist agents use tools, streaming SSE shows tool calls and tokens, semantic cache and rate limiter run in front of every request." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #07070a;
+      --panel: rgba(20, 20, 28, 0.7);
+      --border: #2a2a35;
+      --text: #e5e5e5;
+      --muted: #8b8b96;
+      --accent: #4ade80;
+      --accent-soft: #064e3b;
+      --tool: rgba(30, 30, 40, 0.6);
+      --route: rgba(6, 78, 59, 0.5);
+      --route-text: #6ee7b7;
+      --cache: rgba(120, 53, 15, 0.5);
+      --cache-text: #fdba74;
+      --error: rgba(127, 29, 29, 0.5);
+      --error-text: #fca5a5;
+
+      --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --radius: 4px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font: 15px/1.55 var(--font-mono);
+      color: var(--text);
+      background:
+        radial-gradient(900px 600px at 0% 0%, rgba(74, 222, 128, 0.18) 0%, transparent 55%),
+        radial-gradient(1000px 700px at 100% 0%, rgba(99, 102, 241, 0.22) 0%, transparent 55%),
+        radial-gradient(900px 700px at 50% 100%, rgba(236, 72, 153, 0.15) 0%, transparent 55%),
+        var(--bg);
+      background-attachment: fixed;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(7, 7, 10, 0.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+    header p  { margin: 0; color: var(--muted); font-size: 13px; }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      gap: 16px;
+    }
+
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; }
+    .examples button {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font: inherit;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .examples button:hover {
+      border-color: var(--accent);
+      background: rgba(74, 222, 128, 0.12);
+    }
+
+    .conversation {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    .conversation:empty::before {
+      content: "Ask a question to start. The agent will classify your message, search the NovaCRM knowledge base, call tools as needed, and stream the response.";
+      display: block;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 32px 24px;
+      text-align: center;
+      max-width: 520px;
+      margin: auto;
+    }
+
+    .turn { display: flex; flex-direction: column; gap: 8px; }
+    .turn.user .bubble {
+      align-self: flex-end;
+      background: transparent;
+      color: var(--accent);
+      border: 1px dashed var(--accent);
+      max-width: 80%;
+    }
+    .turn.user .bubble::before {
+      content: "$ ";
+      opacity: 0.7;
+    }
+    .turn.assistant .bubble {
+      align-self: flex-start;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      max-width: 80%;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .bubble {
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .events {
+      align-self: flex-start;
+      max-width: 80%;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
+    .event {
+      padding: 4px 10px;
+      border-radius: var(--radius);
+      background: var(--tool);
+      color: var(--muted);
+    }
+    .event.route { background: var(--route); color: var(--route-text); }
+    .event.cache { background: var(--cache); color: var(--cache-text); }
+    .event.error { background: var(--error); color: var(--error-text); }
+
+    .meta {
+      align-self: flex-start;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: auto auto 1fr auto;
+      gap: 8px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    form select, form input[type="text"], form textarea {
+      font: inherit;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(0, 0, 0, 0.5);
+      color: var(--text);
+    }
+    form select { font-size: 13px; }
+    form textarea {
+      font-size: 14px;
+      padding: 8px 12px;
+      resize: none;
+      min-height: 40px;
+      max-height: 200px;
+    }
+    form textarea:focus, form select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    form button[type="submit"] {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 18px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    form button[type="submit"]:disabled { opacity: 0.5; cursor: wait; }
+
+    .session-label {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+      form { grid-template-columns: 1fr; }
+    }
+    noscript {
+      display: block;
+      padding: 24px;
+      text-align: center;
+      color: var(--error-text);
+      background: var(--error);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>NovaCRM Support Agent</h1>
+    <p>Router → specialist agents · RAG · streaming · semantic cache · per-customer rate limiting</p>
+  </header>
+
+  <noscript>JavaScript is required to use this demo.</noscript>
+
+  <main>
+    <section class="examples" id="examples">
+      <button data-q="How much does the Pro plan cost?">Pro plan price</button>
+      <button data-q="I want a refund for order ORD-5003">Request a refund</button>
+      <button data-q="How do I integrate the NovaCRM API?">API integration</button>
+      <button data-q="I'm furious. Cancel my account immediately and delete my data.">Escalation</button>
+    </section>
+
+    <section class="conversation" id="conversation"></section>
+
+    <form id="composer">
+      <select id="customer" title="Customer context">
+        <option value="">Anonymous</option>
+        <option value="C-1001">Alice · Pro</option>
+        <option value="C-1002">Bob · Enterprise</option>
+        <option value="C-1003">Carol · Free</option>
+      </select>
+      <label class="session-label">
+        <input type="checkbox" id="session-toggle" />
+        Multi-turn
+      </label>
+      <textarea id="prompt" placeholder="Ask anything…" required rows="1"></textarea>
+      <button type="submit" id="send">Send</button>
+    </form>
+  </main>
+
+  <script>
+    const conversation = document.getElementById("conversation");
+    const form = document.getElementById("composer");
+    const promptEl = document.getElementById("prompt");
+    const customerEl = document.getElementById("customer");
+    const sessionToggle = document.getElementById("session-toggle");
+    const sendBtn = document.getElementById("send");
+
+    const sessionId = crypto.randomUUID();
+
+    document.querySelectorAll("#examples button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        promptEl.value = btn.dataset.q;
+        promptEl.focus();
+      });
+    });
+
+    promptEl.addEventListener("input", () => {
+      promptEl.style.height = "auto";
+      promptEl.style.height = Math.min(promptEl.scrollHeight, 200) + "px";
+    });
+
+    promptEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = promptEl.value.trim();
+      if (!message) return;
+
+      sendBtn.disabled = true;
+      promptEl.disabled = true;
+
+      appendUserTurn(message);
+      promptEl.value = "";
+      promptEl.style.height = "auto";
+
+      const assistantTurn = appendAssistantTurn();
+
+      try {
+        const body = {
+          message,
+          customer_id: customerEl.value || null,
+          session_id: sessionToggle.checked ? sessionId : null,
+        };
+        await streamChat(body, assistantTurn);
+      } catch (err) {
+        appendEvent(assistantTurn, "error", `Error: ${err.message}`);
+      } finally {
+        sendBtn.disabled = false;
+        promptEl.disabled = false;
+        promptEl.focus();
+      }
+    });
+
+    function appendUserTurn(text) {
+      const turn = document.createElement("div");
+      turn.className = "turn user";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      turn.appendChild(bubble);
+      conversation.appendChild(turn);
+      conversation.scrollTop = conversation.scrollHeight;
+    }
+
+    function appendAssistantTurn() {
+      const turn = document.createElement("div");
+      turn.className = "turn assistant";
+      const events = document.createElement("div");
+      events.className = "events";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = "";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      turn.appendChild(events);
+      turn.appendChild(bubble);
+      turn.appendChild(meta);
+      conversation.appendChild(turn);
+      conversation.scrollTop = conversation.scrollHeight;
+      return { events, bubble, meta };
+    }
+
+    function appendEvent(turn, kind, text) {
+      const el = document.createElement("div");
+      el.className = `event ${kind}`;
+      el.textContent = text;
+      turn.events.appendChild(el);
+      conversation.scrollTop = conversation.scrollHeight;
+    }
+
+    async function streamChat(body, turn) {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status}: ${text}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let separatorIndex;
+        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, separatorIndex);
+          buffer = buffer.slice(separatorIndex + 2);
+          handleSseBlock(block, turn);
+        }
+      }
+    }
+
+    function handleSseBlock(block, turn) {
+      let event = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (!data) return;
+
+      let parsed;
+      try { parsed = JSON.parse(data); } catch { return; }
+
+      if (event === "token") {
+        turn.bubble.textContent += parsed.content;
+      } else if (event === "status") {
+        if (parsed.cache === "hit") {
+          appendEvent(turn, "cache", "Cache hit (semantic match)");
+        } else if (parsed.route) {
+          appendEvent(turn, "route", `Routed to ${parsed.route} (confidence ${parsed.confidence.toFixed(2)})`);
+        } else if (parsed.tool && parsed.status === "calling") {
+          appendEvent(turn, "tool", `Calling ${parsed.tool}…`);
+        } else if (parsed.tool && parsed.status === "done") {
+          appendEvent(turn, "tool", `${parsed.tool} done`);
+        }
+      } else if (event === "done") {
+        const cost = (parsed.cost ?? 0).toFixed(4);
+        const cached = parsed.cached ? " (cached)" : "";
+        const tokens = parsed.input_tokens != null
+          ? ` · ${parsed.input_tokens}+${parsed.output_tokens} tokens`
+          : "";
+        turn.meta.textContent = `$${cost}${tokens}${cached}`;
+      } else if (event === "error") {
+        appendEvent(turn, "error", parsed.message || "Unknown error");
+      }
+    }
+  </script>
+</body>
+</html>
