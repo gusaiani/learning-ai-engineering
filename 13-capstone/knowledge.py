@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from config import openai_client, chroma_client, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, observe
+from config import chroma_client, observe
 
 # ---------------------------------------------------------------------------
 # ChromaDB collection
@@ -55,13 +55,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str
 @observe(name="embed_texts")
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Call OpenAI embeddings API for a batch of texts. Return list of vectors."""
-    response = openai_client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=texts,
-        dimensions=EMBEDDING_DIMENSIONS,
-    )
-    return [item.embedding for item in response.data]
-
+    return embeddings.embed_documents(texts)
 
 # ---------------------------------------------------------------------------
 # Ingestion

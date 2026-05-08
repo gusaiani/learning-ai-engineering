@@ -11,10 +11,14 @@ import base64
 import json
 import mimetypes
 from pathlib import Path
-from typing import Generator, Literal
+from typing import Annotated, Generator, Literal, TypedDict
 
 from pydantic import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langgraph.graph.message import add_messages
+from langgraph.graph import StateGraph, END
 
 from config import openai_client, chat_model, CHAT_MODEL, VISION_MODEL, calculate_cost, observe
 from knowledge import search as kb_search
@@ -101,6 +105,93 @@ class RouteDecision(BaseModel):
     reasoning: str
     confidence: float
 
+
+# ---------------------------------------------------------------------------
+# Graph state
+# ---------------------------------------------------------------------------
+class AgentState(TypedDict):
+    """State threaded through the LangGraph agent loop."""
+
+    messages: Annotated[list, add_messages]
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int
+
+
+# ---------------------------------------------------------------------------
+# Tools (LangChain @tool - schema derived from signature + docstring)
+# ---------------------------------------------------------------------------
+
+@tool
+def search_knowledge_base(query: str) -> dict:
+    """Search the NovaCRM knowledge base for information about pricing, features, API, account management, etc."""
+    results = kb_search(query, top_k=3)
+    return {"results": [{"text": r["text"], "source": r["source"]} for r in results]}
+    
+@tool
+def lookup_customer(customer_id: str) -> dict:
+    """Look up a customer record by their customer ID (e.g. C-1001)."""
+    customer = MOCK_CUSTOMERS.get(customer_id)
+    if customer is None:
+        return {"error": "Customer not found"}
+    return customer
+
+@tool
+def lookup_order(order_id: str) -> dict:
+    """Look up an order or subscription by order ID (e.g. ORD-5001)."""
+    order = MOCK_ORDERS.get(order_id)
+    if order is None:
+        return {"error": "Order not found"}
+    return order
+
+@tool
+def create_ticket(
+    subject: str,
+    priority: Literal["low", "medium", "high", "urgent"],
+    description: str,
+    customer_id: str | None = None,
+) -> dict:
+    """Create a support ticket to escalate an issue to a human agent.
+
+    Returns: {"ticket_id": "TKT-XXXX", "status": "created"}
+    """
+    ticket_id = f"TKT-{len(TICKETS) + 1:04d}"
+    ticket = {
+        "ticket_id": ticket_id,
+        "customer_id": customer_id or "unknown",
+        "subject": subject,
+        "description": description,
+        "priority": priority,
+    }
+    TICKETS.append(ticket)
+    return {"ticket_id": ticket_id, "status": "created"}
+
+@tool
+def analyze_image(image_path: str, question: str = "Describe what you see.") -> dict:
+    """Analyze a customer screenshot or image using GPT-4o vision to identify errors, UI issues, etc.
+
+    Returns: {"analysis": "<vision model's description>"} or {"error": "..."} if the file is missing.
+    """
+    try:
+        image_data = Path(image_path).read_bytes()
+    except FileNotFoundError:
+        return {"error": f"Image not found: {image_path}"}
+
+    mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
+    b64_image = base64.b64encode(image_data).decode()
+    data_url = f"data:{mime_type};base64,{b64_image}"
+
+    response = openai_client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {"role": "system", "content": "You are a helpful visual assistant."},
+            {"role": "user", "content": [
+                {"type": "text", "text": question},
+                {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
+            ]},
+        ],
+    )
+    return {"analysis": response.choices[0].message.content}
 
 # ---------------------------------------------------------------------------
 # Tool definitions (OpenAI function-calling format)
@@ -433,112 +524,157 @@ OFF_TOPIC_RESPONSE = (
     "NovaCRM. Is there something I can help you with related to that?"
 )
 
+
+# ---------------------------------------------------------------------------
+# LangGraph: tools registry + tool-bound model
+# ---------------------------------------------------------------------------
+
+TOOLS = [
+    search_knowledge_base,
+    lookup_customer,
+    lookup_order,
+    create_ticket,
+    analyze_image,
+]
+
+# name -> callable, so the tools node can dispatch by tool_call.name
+tools_by_name = {t.name: t for t in TOOLS}
+
+# Model that knows the tool schemas — derived from @tool signatures + docstrings
+chat_model_with_tools = chat_model.bind_tools(TOOLS)
+
+def call_model(state: AgentState) -> dict:
+    """Agent node: call the model with the current message history.
+
+    Returns a state patch - the new AIMessage gets appended to state["messages"]
+    via the add_messages reducer.
+    """
+    response = chat_model_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+def should_continue(state: AgentState) -> Literal["tools", "end"]:
+    """Conditional edge: if the model wants to call tools, go to the tools node.
+    Otherwise we're done."""
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+    return "end"
+
+def run_tools(state: AgentState) -> dict:
+    """Tools node: execute each tool call on the last AIMessage,
+    append a ToolMessage per call so the model sees results next turn."""
+    last_message = state["messages"][-1]
+    tool_messages = []
+
+    for tool_call in last_message.tool_calls:
+        tool_fn = tools_by_name[tool_call["name"]]
+        result = tool_fn.invoke(tool_call["args"])
+        tool_messages.append(
+            ToolMessage(
+                content=json.dumps(result),
+                tool_call_id=tool_call["id"],
+                name=tool_call["name"],
+            )
+        )
+
+    return {"messages": tool_messages}
+
+
+# ---------------------------------------------------------------------------
+# Compile the graph
+# ---------------------------------------------------------------------------
+
+builder = StateGraph(AgentState)
+
+builder.add_node("agent", call_model)
+builder.add_node("tools", run_tools)
+
+builder.set_entry_point("agent")
+
+# After 'agent', should_continue returns "tools" or "end" — map those to nodes
+builder.add_conditional_edges(
+    "agent",
+    should_continue,
+    {"tools": "tools", "end": END},
+)
+
+# After 'tools' always go back to 'agent' for the next turn
+builder.add_edge("tools", "agent")
+
+graph = builder.compile()
+
 # ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
 @observe(name="run_agent_loop")
 def run_agent_loop(
     messages: list[dict],
-    tools: list[dict],
+    tools: list[dict],        # ignored now, graph already knows its tools
     system_prompt: str,
-    model: str = CHAT_MODEL,
+    model: str = CHAT_MODEL,  # ignored now - graph uses chat_model from config
 ) -> Generator[AgentEvent, None, None]:
-    """Core agent loop. Yields AgentEvent objects.
-
-    The loop:
-    1. Call the model with messages + tools
-    2. If the model returns tool_calls:
-       - Yield status events for each tool call
-       - Execute each tool
-       - Append tool results to messages
-       - Go to step 1
-    3. If the model returns content (final response):
-       - Stream tokens, yielding a token event for each
-       - Yield a done event with usage stats
-    """
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    """Drive the LangGraph agent loop and translate its events into AgentEvents."""
+    initial_messages = [SystemMessage(content=system_prompt)] + messages
+    initial_state: AgentState = {
+        "messages": initial_messages,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_input_tokens": 0,
+    }
 
     total_input_tokens = 0
     total_output_tokens = 0
     total_cached_input_tokens = 0
 
-    for _ in range(10):
-        try:
-            response = openai_client.chat.completions.create(
-                model=model,
-                messages=full_messages,
-                tools=tools,
-                stream=True,
-                stream_options={"include_usage": True},
-            )
-
-            content_parts = []
-            tool_calls_map = {}
-            role = None
-
-            for chunk in response:
-                if chunk.usage:
-                    total_input_tokens += chunk.usage.prompt_tokens
-                    total_output_tokens += chunk.usage.completion_tokens
-                    details = getattr(chunk.usage, "prompt_tokens_details", None)
-                    if details:
-                        total_cached_input_tokens += getattr(details, "cached_tokens", 0) or 0
+    for stream_mode, event in graph.stream(
+        initial_state,
+        stream_mode=["updates", "messages"]
+    ):
+        if stream_mode == "updates":
+            # event is {node_name: state_patch}, e.g. {"tools": {"messages", [...]}}
+            for node_name, patch in event.items():
+                if node_name != "tools":
                     continue
-
-                delta = chunk.choices[0].delta
-
-                if delta.role:
-                    role = delta.role
-
-                if delta.content:
-                    content_parts.append(delta.content)
-                    yield AgentEvent(type="token", data={"content": delta.content})
-
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        if tc.index not in tool_calls_map:
-                            tool_calls_map[tc.index] = {"id": tc.id, "name": "", "arguments": ""}
-                        if tc.function.name:
-                            tool_calls_map[tc.index]["name"] = tc.function.name
-                        if tc.function.arguments:
-                            tool_calls_map[tc.index]["arguments"] += tc.function.arguments
-
-            if tool_calls_map:
-                assistant_tool_calls = [
-                    {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": tc["arguments"]}}
-                    for tc in tool_calls_map.values()
-                ]
-                full_messages.append({"role": "assistant", "tool_calls": assistant_tool_calls})
-
-                for tc in tool_calls_map.values():
-                    name = tc["name"]
-                    args = json.loads(tc["arguments"])
-                    yield AgentEvent(type="status", data={"tool": name, "status": "calling", "arguments": tc["arguments"]})
-                    result = execute_tool(name, args)
-                    yield AgentEvent(type="status", data={"tool": name, "status": "done", "preview": result[:200]})
-                    full_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-            else:
-                cost = calculate_cost(
-                    model,
-                    total_input_tokens,
-                    total_output_tokens,
-                    total_cached_input_tokens
-                )
-                yield AgentEvent(
-                    type="done", 
-                    data={
-                        "model": model, 
-                        "input_tokens": total_input_tokens, 
-                        "cached_input_tokens": total_cached_input_tokens,
-                        "output_tokens": total_output_tokens, 
-                        "cost": cost
-                    },
-                )
-                break
-
-        except Exception as e:
-            yield AgentEvent(type="error", data={"message": str(e)})
-            break
+                # The tools node just appended ToolMessages - surface each as a status event
+                for msg in patch["messages"]:
+                    yield AgentEvent(
+                        type="status",
+                        data={
+                            "tool": msg.name,
+                            "status": "done",
+                            "preview": msg.content[:200]
+                        },
+                    )
+        elif stream_mode == "messages":
+            chunk, metadata = event
+            # Only forward chunks from the 'agent' node, and only if they carry text
+            if metadata.get("langgraph_node") != "agent":
+                continue
+            if chunk.usage_metadata:
+                total_input_tokens += chunk.usage_metadata.get("input_tokens", 0)
+                total_output_tokens += chunk.usage_metadata.get("output_tokens", 0)
+                input_details = chunk.usage_metadata.get("input_token_details") or {}
+                total_cached_input_tokens += input_details.get("cache_read", 0)
+            if not chunk.content:
+                continue
+            yield AgentEvent(type="token", data={"content": chunk.content})
+    
+    cost = calculate_cost(
+        CHAT_MODEL,
+        total_input_tokens,
+        total_output_tokens,
+        total_cached_input_tokens,
+    )
+    yield AgentEvent(
+        type="done",
+        data={
+            "model": CHAT_MODEL,
+            "input_tokens": total_input_tokens,
+            "cached_input_tokens": total_cached_input_tokens,
+            "output_tokens": total_output_tokens,
+            "cost": cost,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

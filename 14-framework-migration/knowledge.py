@@ -13,18 +13,13 @@ from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 
-from config import openai_client, chroma_client, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, observe
+from config import chroma_client, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, observe
 
 # ---------------------------------------------------------------------------
 # ChromaDB collection
 # ---------------------------------------------------------------------------
 
 COLLECTION_NAME = "knowledge_base"
-
-collection = chroma_client.get_or_create_collection(
-    name=COLLECTION_NAME,
-    metadata={"hnsw:space": "cosine"},
-)
 
 embeddings = OpenAIEmbeddings(
     model=EMBEDDING_MODEL,
@@ -34,9 +29,8 @@ embeddings = OpenAIEmbeddings(
 vectorstore = Chroma(
     collection_name=COLLECTION_NAME,
     embedding_function=embeddings,
-    client=chroma_client, # reuse the chromadb client from config — no double-lock
+    client=chroma_client, # reuse the chromabd client from config — no double-lock
 )
-
 
 # ---------------------------------------------------------------------------
 # Chunking
@@ -68,12 +62,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str
 @observe(name="embed_texts")
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Call OpenAI embeddings API for a batch of texts. Return list of vectors."""
-    response = openai_client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=texts,
-        dimensions=EMBEDDING_DIMENSIONS,
-    )
-    return [item.embedding for item in response.data]
+    return embeddings.embed_documents(texts)
 
 
 # ---------------------------------------------------------------------------
@@ -91,16 +80,13 @@ def ingest_file(file_path: Path) -> dict:
         if not chunks:
             return {"file": file_path.name, "chunks": 0, "status": "ok", "error": None}
 
-        embeddings = embed_texts(chunks)
-
         ids = [f"{file_path.stem}_{i}" for i in range(len(chunks))]
         metadatas = [{"source": file_path.name, "chunk_index": i} for i in range(len(chunks))]
 
-        collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=chunks,
+        vectorstore.add_texts(
+            texts=chunks,
             metadatas=metadatas,
+            ids=ids,
         )
 
         return {"file": file_path.name, "chunks": len(chunks), "status": "ok", "error": None}
@@ -126,23 +112,17 @@ def search(query: str, top_k: int = 5) -> list[dict]:
 
     Each result: {"text": str, "source": str, "score": float, "chunk_index": int}
     """
-    embedding = embed_texts([query])[0]
+    matches = vectorstore.similarity_search_with_score(query, k=top_k)
 
-    results = collection.query(
-        query_embeddings=[embedding],
-        n_results=top_k,
-    )
-
-    items = []
-    for i in range(len(results["ids"][0])):
-        items.append({
-            "text": results["documents"][0][i],
-            "source": results["metadatas"][0][i]["source"],
-            "score": results["distances"][0][i],
-            "chunk_index": results["metadatas"][0][i]["chunk_index"],
-        })
-
-    return items
+    return [
+        {
+            "text": doc.page_content,
+            "source": doc.metadata["source"],
+            "score": score,
+            "chunk_index": doc.metadata["chunk_index"],
+        }
+        for doc, score in matches
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -154,16 +134,14 @@ def list_documents() -> dict:
 
     Returns: {"total_chunks": int, "sources": list[str]}
     """
-    total = collection.count()
+    all_data = vectorstore.get(include=["metadatas"])
+    metadatas = all_data["metadatas"]
 
-    if total == 0:
+    if not metadatas:
         return {"total_chunks": 0, "sources": []}
 
-    all_data = collection.get(include=["metadatas"])
-    sources = sorted(set(m["source"] for m in all_data["metadatas"]))
-
-    return {"total_chunks": total, "sources": sources}
-
+    sources = sorted({m["source"] for m in metadatas})
+    return {"total_chunks": len(metadatas), "sources": sources}
 
 # ---------------------------------------------------------------------------
 # CLI
