@@ -194,187 +194,6 @@ def analyze_image(image_path: str, question: str = "Describe what you see.") -> 
     return {"analysis": response.choices[0].message.content}
 
 # ---------------------------------------------------------------------------
-# Tool definitions (OpenAI function-calling format)
-# ---------------------------------------------------------------------------
-
-TOOL_SCHEMAS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": "Search the NovaCRM knowledge base for information about pricing, features, API, account management, etc.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query",
-                    }
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lookup_customer",
-            "description": "Look up a customer record by their customer ID (e.g. C-1001).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "customer_id": {
-                        "type": "string",
-                        "description": "Customer ID, e.g. C-1001",
-                    }
-                },
-                "required": ["customer_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lookup_order",
-            "description": "Look up an order or subscription by order ID (e.g. ORD-5001).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "order_id": {
-                        "type": "string",
-                        "description": "Order ID, e.g. ORD-5001",
-                    }
-                },
-                "required": ["order_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_ticket",
-            "description": "Create a support ticket to escalate an issue to a human agent.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "subject": {"type": "string", "description": "Ticket subject line"},
-                    "priority": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high", "urgent"],
-                    },
-                    "description": {"type": "string", "description": "Full description of the issue"},
-                    "customer_id": {"type": "string", "description": "Customer ID if known"},
-                },
-                "required": ["subject", "priority", "description"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "analyze_image",
-            "description": "Analyze a customer screenshot or image using GPT-4o vision to identify errors, UI issues, etc.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "image_path": {
-                        "type": "string",
-                        "description": "Path to the image file",
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": "What to look for in the image (default: describe what you see)",
-                    },
-                },
-                "required": ["image_path"],
-            },
-        },
-    },
-]
-
-
-# ---------------------------------------------------------------------------
-# Tool execution
-# ---------------------------------------------------------------------------
-
-def execute_tool(name: str, arguments: dict) -> str:
-    """Execute a tool by name and return the result as a JSON string."""
-    handlers = {
-        "search_knowledge_base": _tool_search_kb,
-        "lookup_customer": _tool_lookup_customer,
-        "lookup_order": _tool_lookup_order,
-        "create_ticket": _tool_create_ticket,
-        "analyze_image": _tool_analyze_image
-    }
-
-    handler = handlers.get(name)
-    if handler is None:
-        return json.dumps({"error": f"Unknown tool: {name}"})
-    return json.dumps(handler(arguments))
-
-
-def _tool_search_kb(args: dict) -> dict:
-    """Search the knowledge base."""
-    results = kb_search(args["query"], top_k=3)
-    return {"results": [{"text": r["text"], "source": r["source"]} for r in results]}
-
-
-def _tool_lookup_customer(args: dict) -> dict:
-    """Look up customer from mock data."""
-    customer = MOCK_CUSTOMERS.get(args["customer_id"])
-    if customer is None:
-        return {"error": "Customer not found"}
-    return customer
-
-
-def _tool_lookup_order(args: dict) -> dict:
-    """Look up order from mock data."""
-    order = MOCK_ORDERS.get(args["order_id"])
-    if order is None:
-        return {"error": "Order not found"}
-    return order
-
-
-def _tool_create_ticket(args: dict) -> dict:
-    """Create a support ticket."""
-    ticket_id = f"TKT-{len(TICKETS) +1:04d}"
-    ticket = {
-        "ticket_id": ticket_id,
-        "customer_id": args.get("customer_id", "unknown"),
-        "subject": args.get("subject", ""),
-        "description": args.get("description", ""),
-        "priority": args.get("priority", "medium"),
-    }
-    TICKETS.append(ticket)
-    return {"ticket_id": ticket_id, "status": "created"}
-
-
-def _tool_analyze_image(args: dict) -> dict:
-    """Analyze an image with GPT-4o vision."""
-    try:
-        image_path = args["image_path"]
-        image_data = Path(image_path).read_bytes()
-    except FileNotFoundError:
-        return {"error": f"Image not found: {args['image_path']}"}
-
-    mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
-    b64_image = base64.b64encode(image_data).decode()
-    data_url = f"data:{mime_type};base64,{b64_image}"
-
-    question = args.get("question", "Describe what you see.")
-    response = openai_client.chat.completions.create(
-        model=VISION_MODEL,
-        messages=[
-            {"role": "system", "content": "You are a helpful visual assistant."},
-            {"role": "user", "content": [
-                {"type": "text", "text": question},
-                {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
-            ]},
-        ],
-    )
-    return {"analysis": response.choices[0].message.content}
-
-# ---------------------------------------------------------------------------
 # Specialist system prompts
 # ---------------------------------------------------------------------------
 
@@ -609,9 +428,7 @@ graph = builder.compile()
 @observe(name="run_agent_loop")
 def run_agent_loop(
     messages: list[dict],
-    tools: list[dict],        # ignored now, graph already knows its tools
     system_prompt: str,
-    model: str = CHAT_MODEL,  # ignored now - graph uses chat_model from config
 ) -> Generator[AgentEvent, None, None]:
     """Drive the LangGraph agent loop and translate its events into AgentEvents."""
     initial_messages = [SystemMessage(content=system_prompt)] + messages
@@ -704,22 +521,10 @@ SPECIALIST_PROMPTS = {
 }
 
 SPECIALISTS = {
-    "billing": {
-        "prompt": SPECIALIST_PROMPTS["billing"],
-        "tools": TOOL_SCHEMAS,
-    },
-    "technical": {
-        "prompt": SPECIALIST_PROMPTS["technical"],
-        "tools": TOOL_SCHEMAS,
-    },
-    "general": {
-        "prompt": SPECIALIST_PROMPTS["general"],
-        "tools": [TOOL_SCHEMAS[0]],  # KB search only
-    },
-    "escalation": {
-        "prompt": SPECIALIST_PROMPTS["escalation"],
-        "tools": [TOOL_SCHEMAS[3]],  # create ticket
-    },
+    "billing": SPECIALIST_PROMPTS["billing"],
+    "technical":  SPECIALIST_PROMPTS["technical"],
+    "general":  SPECIALIST_PROMPTS["general"],
+    "escalation":  SPECIALIST_PROMPTS["escalation"],
 }
 
 
@@ -756,8 +561,8 @@ def run_support_agent(
         yield AgentEvent(type="done", data={"cost": 0.0, "off_topic": True})
         return
 
-    specialist = SPECIALISTS[decision.category]
-    system_prompt = specialist["prompt"].format_messages()[0].content
+    specialist_prompt = SPECIALISTS[decision.category]
+    system_prompt = specialist_prompt.format_messages()[0].content
 
     user_message = message
     if customer_id:
@@ -768,7 +573,7 @@ def run_support_agent(
     messages = history + [{"role": "user", "content": user_message}]
     
     assistant_parts: list[str] = []
-    for event in run_agent_loop(messages, specialist["tools"], system_prompt):
+    for event in run_agent_loop(messages, system_prompt):
         if event.type == "token":
             assistant_parts.append(event.data["content"])
         yield event
