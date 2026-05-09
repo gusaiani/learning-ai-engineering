@@ -12,6 +12,7 @@ import json
 import mimetypes
 from pathlib import Path
 from typing import Annotated, Generator, Literal, TypedDict
+from contextlib import nullcontext
 
 from pydantic import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
@@ -20,7 +21,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Tool
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, END
 
-from config import openai_client, chat_model, CHAT_MODEL, VISION_MODEL, calculate_cost, observe
+from config import openai_client, chat_model, CHAT_MODEL, VISION_MODEL, calculate_cost, langfuse_client, langfuse_handler
 from knowledge import search as kb_search
 from sessions import get_history, append_turn
 from semantic_cache import lookup as cache_lookup, store as cache_store
@@ -425,7 +426,6 @@ graph = builder.compile()
 # ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
-@observe(name="run_agent_loop")
 def run_agent_loop(
     messages: list[dict],
     system_prompt: str,
@@ -443,9 +443,12 @@ def run_agent_loop(
     total_output_tokens = 0
     total_cached_input_tokens = 0
 
+    callbacks = [langfuse_handler] if langfuse_handler else []
+
     for stream_mode, event in graph.stream(
         initial_state,
-        stream_mode=["updates", "messages"]
+        stream_mode=["updates", "messages"],
+        config={"callbacks": callbacks},
     ):
         if stream_mode == "updates":
             # event is {node_name: state_patch}, e.g. {"tools": {"messages", [...]}}
@@ -497,9 +500,9 @@ def run_agent_loop(
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-@observe(name="route_query")
 def route_query(message: str) -> RouteDecision:
     """Classify a customer message using structured output."""
+    callbacks = [langfuse_handler] if langfuse_handler else []
     router = router_prompt | chat_model.with_structured_output(RouteDecision)
     return router.invoke({"message": message})
 
@@ -531,7 +534,6 @@ SPECIALISTS = {
 # ---------------------------------------------------------------------------
 # Full pipeline
 # ---------------------------------------------------------------------------
-@observe(name="run_support_agent")
 def run_support_agent(
     message: str,
     customer_id: str | None = None,
@@ -542,6 +544,25 @@ def run_support_agent(
 
     Yields AgentEvent objects for the server to convert to SSE.
     """
+    span_ctx = (
+        langfuse_client.start_as_current_span(name="run_support_agent") 
+        if langfuse_client 
+        else nullcontext()
+    )
+    with span_ctx:
+        yield from _run_support_agent_inner(
+            message=message,
+            customer_id=customer_id,
+            image_path=image_path,
+            session_id=session_id,
+        )
+
+def _run_support_agent_inner(
+    message: str,
+    customer_id: str | None = None,
+    image_path: str | None = None,
+    session_id: str | None = None,
+) -> Generator[AgentEvent, None, None]:
     history = get_history(session_id) if session_id else []
     cacheable = not (session_id or customer_id or image_path)
 

@@ -1,0 +1,58 @@
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant S as server.py FastAPI/SSE
+  participant RL as rate_limit
+  participant SC as semantic_cache
+  participant LF as Langfuse span
+  participant R as route_query
+  participant G as LangGraph StateGraph
+  participant T as tools_by_name
+  participant KB as knowledge.py + Chroma
+  participant V as OpenAI vision
+
+  B->>S: POST /chat/stream {message, session_id?, image_path?}
+  S->>RL: check(ip)
+  RL-->>S: ok
+  S->>SC: lookup(message)
+  SC-->>S: miss
+  S->>LF: start_as_current_span run_support_agent
+
+  S->>R: route_query(message)
+  Note over R: router_prompt | chat_model.with_structured_output(RouteDecision)
+  R-->>S: RouteDecision category=technical confidence=0.92
+  S-->>B: SSE status route=technical
+
+  S->>S: pick specialist prompt and build initial AgentState
+  S->>G: graph.stream(state, stream_mode=updates+messages, callbacks=langfuse_handler)
+
+  loop until final AIMessage has no tool_calls
+    G->>G: agent node — chat_model_with_tools.invoke(messages)
+    Note over G: AIMessage has tool_calls?
+    alt yes — tool_calls present
+      G->>T: tools node — for each tool_call run tools_by_name[name].invoke(args)
+      alt search_knowledge_base
+        T->>KB: kb_search(query, top_k=3)
+        KB->>KB: vectorstore.similarity_search_with_score
+        KB-->>T: list of text+source+score
+      else lookup_customer / lookup_order / create_ticket
+        T->>T: in-memory dict lookup
+      else analyze_image
+        T->>V: openai_client.chat.completions.create gpt-4o vision
+        V-->>T: vision description
+      end
+      T-->>G: ToolMessage(content=json.dumps(result)) appended via add_messages
+      G-->>S: stream_mode=updates → AgentEvent status tool preview
+      S-->>B: SSE status tool=name status=done preview
+    else no — final answer
+      G-->>S: stream_mode=messages → chunk.content
+      S-->>B: SSE token content (one event per chunk)
+    end
+  end
+
+  Note over G: final chunk carries usage_metadata → totals accumulate
+  G-->>S: AgentEvent done model tokens cost
+  S->>SC: store(message, final_response) if cacheable
+  S->>S: append_turn user and assistant if session
+  S-->>B: SSE done model input_tokens output_tokens cost
+  LF-->>LF: span ends → one nested trace per request

@@ -23,10 +23,13 @@ chroma_client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 
 try:
     from langfuse import Langfuse, observe
+    from langfuse.langchain import CallbackHandler
 
     langfuse_client = Langfuse()
+    langfuse_handler = CallbackHandler()
 except Exception:
     langfuse_client = None
+    langfuse_handler = None
 
     def observe(*args, **kwargs):
         """No-op decorator when Langfuse is not configured"""
